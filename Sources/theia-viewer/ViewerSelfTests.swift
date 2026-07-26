@@ -960,6 +960,27 @@ func runViewerSelfTests() -> Int32 {
         expect(false, "world migration fixture failed: \(error)")
     }
 
+    // Terrain-scale controls do nothing when the previewed chain contains no
+    // physics node. Saying so is the difference between "correct" and "broken"
+    // from the user's side; this is exactly the perlin-preview confusion.
+    if let device = MTLCreateSystemDefaultDevice(),
+       let renderer = Renderer(device: device, colorFormat: .bgra8Unorm),
+       let engine = TerrainEngine(graphPath: "examples/fluvial.json") {
+        let model = TerrainModel(engine: engine, renderer: renderer, size: 64)
+        model.selectOutput(nodeId: "carve", output: "height")
+        expect(model.previewUsesWorldScale,
+               "previewing the erosion node should report world scale in use")
+        model.selectOutput(nodeId: "scree", output: "height")
+        expect(model.previewUsesWorldScale,
+               "a chain ending in thermal should report world scale in use")
+        model.selectOutput(nodeId: "base", output: "height")
+        expect(!model.previewUsesWorldScale,
+               "previewing the bare noise source should report world scale unused")
+        print("✓ terrain-scale relevance is reported for the previewed output")
+    } else {
+        expect(false, "world relevance fixture could not be constructed")
+    }
+
     print("\n\(checks) viewer checks, \(failures) failure(s)")
     return failures == 0 ? 0 : 1
 }
