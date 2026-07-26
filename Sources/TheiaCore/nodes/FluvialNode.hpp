@@ -27,7 +27,7 @@ public:
         // Hillslope diffusion (Culling 1960). Sets valley spacing: without it
         // fluvial incision cuts a channel at every cell and the surface fills
         // with grid-scale grooves instead of smooth hillslopes.
-        params.set("diffusion", 0.02);
+        params.set("diffusion", 0.3);
         params.set("rain", 1.0);
         // Above Freeman's 1.1 default: the lower value disperses flow so widely that
         // channels never sharpen. Higher values steer discharge toward the steepest

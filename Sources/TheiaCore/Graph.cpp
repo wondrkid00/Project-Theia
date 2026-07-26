@@ -41,25 +41,6 @@ void migrateLegacyCellSize(Node& n, std::uint32_t documentWidth) {
     n.params.set("terrainSize", cellSize * intervals);
 }
 
-// Phase 10: hillslope transport moved from linear diffusion to the nonlinear
-// Roering law, whose amplification near the critical slope makes the same
-// coefficient roughly ten times stronger. A graph authored before the change
-// carries `diffusion` but not `criticalSlope`; rescaling it preserves the
-// author's intent instead of flattening the terrain on load.
-// See docs/research/fluvial-landscape-evolution-notes.md.
-// `authoredCriticalSlope` must come from the DOCUMENT, not from the node: the
-// constructor has already installed every default by the time this runs, so
-// asking the node whether it has `criticalSlope` always answers yes and the
-// migration would silently never fire.
-void migrateLegacyLinearDiffusion(Node& n, bool authoredCriticalSlope) {
-    if (n.type() != "fluvial") return;
-    if (authoredCriticalSlope) return;
-    auto it = n.params.values.find("diffusion");
-    if (it == n.params.values.end()) return;
-    if (!std::isfinite(it->second) || it->second <= 0.0) return;
-    it->second /= 10.0;
-}
-
 void migrateLegacySlopeMaskDefaults(Node& n) {
     if (n.type() != "slopemask") return;
     const double low = n.params.get("low", 15.0);
@@ -915,10 +896,6 @@ bool Graph::fromJSON(const std::string& text, std::string& error) {
                 }
             }
             migrateLegacyCellSize(*n, next.defaultWidth_);
-            const bool authoredCriticalSlope =
-                jn.contains("params") && jn["params"].is_object() &&
-                jn["params"].contains("criticalSlope");
-            migrateLegacyLinearDiffusion(*n, authoredCriticalSlope);
             migrateLegacySlopeMaskDefaults(*n);
         }
     }

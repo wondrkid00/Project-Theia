@@ -238,9 +238,22 @@ Roering et al. motivate this directly: hillslope curvature is convex near divide
 but becomes increasingly planar downslope, which linear diffusion cannot
 reproduce.
 
+Slope in this law is measured in **world units** (`|dh| * heightScale / cell`),
+exactly as in the fill, weight and incision kernels. An early implementation
+compared a raw normalized-height delta against `Sc`, roughly 100x smaller than
+the physical slope at the default `heightScale`; the amplification never engaged
+and `Sc` was inert across its whole authoring range, leaving the law behaving as
+plain linear diffusion.
+
 The amplification is capped at 10x (`S/Sc <= 0.9487`). The true law is singular
 at `S = Sc` and an unbounded effective diffusivity has no stable explicit step.
-The host sizes its substep budget from the same cap, so the two cannot disagree.
+
+The cap enters the substep **count** but must not enter the per-substep
+coefficient `nu`. The kernel applies the amplification per neighbour, so the
+effective number is `nu * amplify`; folding the cap into `nu` as well
+double-counts it and lets the effective number reach 2.0, eight times the
+stability limit. Correctly: `nu = Kd*dt/cell^2 / substeps`, with
+`substeps = ceil(Kd*dt/cell^2 * cap / 0.2)`.
 
 **Resolution sensitivity.** The diffusion number is `Kd*dt/cell^2`, so a fixed
 `Kd` smooths a fixed *world* distance and therefore fewer *cells* as the grid

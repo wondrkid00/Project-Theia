@@ -35,7 +35,7 @@
         "terrainSize": 1024.0,
         "heightScale": 100.0,
         "accuracy": 1.0,
-        "diffusion": 0.02,
+        "diffusion": 0.3,
         "criticalSlope": 0.6
       }
     },

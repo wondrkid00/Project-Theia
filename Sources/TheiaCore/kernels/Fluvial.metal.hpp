@@ -395,7 +395,13 @@ kernel void fluvial_diffuse(device float*             dst [[buffer(0)]],
         int2 n = int2(gid) + neighbours[k];
         float there = src[uint(n.y) * W + uint(n.x)];
         float drop = here - there;
-        float slope = fabs(drop) / max(P.cellSize, 1e-6);
+        // Slope must be in WORLD units to compare against criticalSlope, same
+        // as every other kernel in this file (fill/weights/incise all read
+        // terrain*heightScale). Without this factor the drop here is a
+        // normalized-height delta, ~100x smaller than the physical slope at the
+        // default heightScale, so the amplification this law depends on never
+        // engages and criticalSlope is inert across its whole authoring range.
+        float slope = fabs(drop) * P.heightScale / max(P.cellSize, 1e-6);
         float ratio = min(slope / sc, 0.9486833);   // caps amplification at 10x
         float amplify = 1.0 / (1.0 - ratio * ratio);
         sum += -drop * amplify;

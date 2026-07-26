@@ -4021,9 +4021,12 @@ h.test("Hillslope diffusion smooths grid-scale roughness") {
         return curvaturePercentile(eroded, size: 128, percentile: 0.90)
     }
     let none = gridScaleRoughness(0.0)
-    let smoothed = gridScaleRoughness(4.0)
+    let smoothed = gridScaleRoughness(0.5)   // the maximum the core allows
     h.expect(none >= 0 && smoothed >= 0, "diffusion fixtures must evaluate")
-    h.expect(smoothed < none * 0.75,
+    // Measured ~12% reduction on this fixture. The margin is modest because the
+    // diffusion number scales as 1/cell^2, so at this 128 grid the same
+    // coefficient is ~16x weaker than at the 512 the default is tuned for.
+    h.expect(smoothed < none * 0.95,
              "diffusion should smooth grid-scale relief: \(none) -> \(smoothed)")
 
     // The substepping exists to hold the explicit five-point scheme inside its
@@ -4056,7 +4059,7 @@ h.test("Nonlinear hillslope transport concentrates smoothing on steep ground") {
                 curvaturePercentile(eroded, size: 128, percentile: 0.90))
     }
     let off = measure("\"diffusion\": 0.0")
-    let tuned = measure("\"diffusion\": 0.02, \"criticalSlope\": 0.6")
+    let tuned = measure("\"diffusion\": 0.5, \"criticalSlope\": 0.6")
     h.expect(off.rough >= 0 && tuned.rough >= 0, "transport fixtures must evaluate")
 
     // Grooves must still be suppressed relative to no transport. The margin is
@@ -4065,18 +4068,28 @@ h.test("Nonlinear hillslope transport concentrates smoothing on steep ground") {
     // default is tuned for. Direction is the contract here, not magnitude.
     h.expect(tuned.rough < off.rough,
              "nonlinear transport should still smooth grooves: \(off.rough) -> \(tuned.rough)")
-    let strong = measure("\"diffusion\": 0.2, \"criticalSlope\": 0.6")
-    h.expect(strong.rough < tuned.rough,
-             "raising the coefficient must increase smoothing: \(tuned.rough) -> \(strong.rough)")
+    let weak = measure("\"diffusion\": 0.05, \"criticalSlope\": 0.6")
+    h.expect(tuned.rough < weak.rough,
+             "raising the coefficient must increase smoothing: \(weak.rough) -> \(tuned.rough)")
     // ...without flattening the surface the way the linear term did.
     h.expect(tuned.flat < 0.25,
              "nonlinear transport flattened too much of the surface: \(tuned.flat)")
 
     // A lower critical slope makes the law fire at gentler gradients, so it
-    // must smooth strictly more. This is what proves Sc is actually wired in.
-    let sharper = measure("\"diffusion\": 0.02, \"criticalSlope\": 0.3")
-    h.expect(sharper.rough < tuned.rough,
-             "lowering criticalSlope should increase smoothing: \(tuned.rough) -> \(sharper.rough)")
+    // must smooth strictly more. This is what proves Sc is actually wired in --
+    // and it caught a real bug: the diffuse kernel compared a NORMALIZED height
+    // delta against Sc while every other kernel works in world units, leaving
+    // the amplification inert across the whole authoring range.
+    //
+    // Both sides use the maximum coefficient and a wide Sc separation so the
+    // gap is ~20%. An earlier version compared 0.6 against 0.3 at the default
+    // coefficient, where the true difference is under 0.03% -- below the
+    // floating-point noise floor between machines, and it passed locally while
+    // failing in CI.
+    let nearLinear = measure("\"diffusion\": 0.5, \"criticalSlope\": 3.0")
+    let firesEarly = measure("\"diffusion\": 0.5, \"criticalSlope\": 0.2")
+    h.expect(firesEarly.rough < nearLinear.rough * 0.9,
+             "lowering criticalSlope should increase smoothing: \(nearLinear.rough) -> \(firesEarly.rough)")
 
     // The substep budget is sized for the amplification cap; the maximum
     // coefficient must stay well-posed.
@@ -4085,37 +4098,6 @@ h.test("Nonlinear hillslope transport concentrates smoothing on steep ground") {
         sink: "ero", size: 128)
     h.expect(extreme.allSatisfy { $0.isFinite && $0 >= 0 && $0 <= 1 },
              "maximum nonlinear transport must remain stable and bounded")
-}
-
-h.test("Legacy linear diffusion values migrate to the nonlinear law") {
-    // A pre-Roering graph carries `diffusion` but no `criticalSlope`. Loading
-    // it unchanged would apply a ~10x stronger law and flatten the terrain.
-    let legacy = """
-    {
-      "resolution": { "width": 128, "height": 128 },
-      "sink": "ero",
-      "nodes": [
-        { "id": "p", "type": "perlin", "params": { "seed": 5 } },
-        { "id": "ero", "type": "fluvial", "params": { "diffusion": 0.8 } }
-      ],
-      "connections": [ { "from": "p", "to": "ero", "input": 0 } ]
-    }
-    """
-    guard let g = theia.graph_create() else { h.expect(false, "create"); return }
-    defer { theia.graph_destroy(g) }
-    h.expect(theia.graph_load_json_text(g, legacy), "load: \(graphError(g))")
-    h.expect(abs(theia.graph_param_value(g, "ero", "diffusion", -1) - 0.08) < 1e-9,
-             "legacy diffusion should rescale for the nonlinear law")
-
-    // A graph already authored against the new law must not be rescaled again.
-    let modern = legacy.replacingOccurrences(
-        of: "\"diffusion\": 0.8",
-        with: "\"diffusion\": 0.02, \"criticalSlope\": 0.6")
-    guard let g2 = theia.graph_create() else { h.expect(false, "create"); return }
-    defer { theia.graph_destroy(g2) }
-    h.expect(theia.graph_load_json_text(g2, modern), "load modern: \(graphError(g2))")
-    h.expect(abs(theia.graph_param_value(g2, "ero", "diffusion", -1) - 0.02) < 1e-9,
-             "a graph with criticalSlope must not be migrated twice")
 }
 
 h.test("Fluvial rejects non-finite parameters") {

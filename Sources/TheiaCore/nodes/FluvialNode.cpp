@@ -110,7 +110,7 @@ bool FluvialNode::simulate(GPUContext& ctx,
         !finiteParam(params, "rain", 1.0, P.rain, error) ||
         !finiteParam(params, "mfdExponent", 3.0, P.mfdExponent, error) ||
         !finiteParam(params, "uplift", 0.0, P.uplift, error) ||
-        !finiteParam(params, "diffusion", 0.02, diffusivity, error) ||
+        !finiteParam(params, "diffusion", 0.3, diffusivity, error) ||
         !finiteParam(params, "minSlope", 0.004, P.minSlope, error) ||
         !finiteParam(params, "criticalSlope", 0.6, P.criticalSlope, error) ||
         !finiteParam(params, "accuracy", 1.0, accuracy, error)) {
@@ -155,23 +155,29 @@ bool FluvialNode::simulate(GPUContext& ctx,
     const int stepAreaPasses = std::max(4, int(24.0f * accuracy));
     const int fluxPasses = std::max(4, int(24.0f * accuracy));
 
-    // Explicit five-point diffusion is stable only while D*dt/cell^2 <= 0.25.
-    // Split the per-step amount into equal substeps that each stay under a
-    // conservative 0.2 rather than clamping the coefficient, so raising
-    // `diffusion` keeps having an effect instead of silently saturating.
-    // Must match the in-kernel amplification cap: the nonlinear law raises the
-    // effective diffusivity by up to this factor near the critical slope, and
-    // the substep budget has to be sized for that worst case or the explicit
-    // scheme goes unstable exactly where the law does the most work.
+    // Explicit five-point diffusion is stable only while the effective
+    // diffusion number stays under ~0.25; the per-step amount is split into
+    // substeps held under a conservative 0.2 rather than clamping the
+    // coefficient, so raising `diffusion` keeps having an effect.
+    //
+    // The nonlinear law multiplies the Laplacian by up to the amplification cap
+    // near the critical slope, so the effective number is nu*amplify. The cap
+    // therefore belongs in the substep COUNT but NOT in `nu` itself -- folding
+    // it into both double-counts it and lets the effective number reach 2.0,
+    // eight times the limit. That stayed hidden while a missing heightScale
+    // left the amplification inert.
     const float kNonlinearAmplificationCap = 10.0f;
-    const float diffusionNumber = diffusivity * kNonlinearAmplificationCap *
-        P.dt / std::max(P.cellSize * P.cellSize, 1e-12f);
+    const float baseDiffusionNumber =
+        diffusivity * P.dt / std::max(P.cellSize * P.cellSize, 1e-12f);
     const int diffusionSubsteps =
-        (diffusionNumber > 0.0f)
-            ? std::clamp(int(std::ceil(diffusionNumber / 0.2f)), 1, 64)
+        (baseDiffusionNumber > 0.0f)
+            ? std::clamp(int(std::ceil(baseDiffusionNumber *
+                                       kNonlinearAmplificationCap / 0.2f)),
+                         1, 64)
             : 0;
     const float diffusionNu =
-        diffusionSubsteps > 0 ? diffusionNumber / float(diffusionSubsteps) : 0.0f;
+        diffusionSubsteps > 0 ? baseDiffusionNumber / float(diffusionSubsteps)
+                              : 0.0f;
 
     struct Pass { const char* fn; MTL::ComputePipelineState* pso; };
     Pass passes[] = {
