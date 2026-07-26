@@ -7,6 +7,7 @@
 #include "nodes/CombineNode.hpp"
 #include "nodes/DropletErosionNode.hpp"
 #include "nodes/ErosionFilterNode.hpp"
+#include "nodes/FluvialNode.hpp"
 #include "nodes/ExportNode.hpp"
 #include "nodes/HydraulicErosionNode.hpp"
 #include "nodes/InvertNode.hpp"
@@ -58,7 +59,8 @@ std::vector<InputPortDescriptor> Node::inputPorts() const {
     } else if (type_ == "river" || type_ == "slopemask" ||
                type_ == "hydraulic" || type_ == "dropleterosion" ||
                type_ == "thermal" || type_ == "terrace" ||
-               type_ == "warp" || type_ == "erosionfilter") {
+               type_ == "warp" || type_ == "erosionfilter" ||
+               type_ == "fluvial") {
         ports[0] = {"terrain", {FieldKind::terrain}};
     }
     return ports;
@@ -68,6 +70,10 @@ std::vector<OutputPortDescriptor> Node::outputPorts() const {
     if (type_ == "erosionfilter") {
         return {{"height", FieldKind::terrain, -1, true},
                 {"ridge", FieldKind::data, -1, false}};
+    }
+    if (type_ == "fluvial") {
+        return {{"height", FieldKind::terrain, -1, true},
+                {"flow", FieldKind::data, -1, false}};
     }
     if (type_ == "river" || type_ == "slopemask") {
         return {{"mask", FieldKind::mask, -1, true}};
@@ -114,6 +120,7 @@ std::unique_ptr<Node> createNode(const std::string& type, const std::string& id)
     if (type == "warp") return std::make_unique<WarpNode>(id);
     if (type == "dropleterosion") return std::make_unique<DropletErosionNode>(id);
     if (type == "erosionfilter") return std::make_unique<ErosionFilterNode>(id);
+    if (type == "fluvial") return std::make_unique<FluvialNode>(id);
     if (type == "river") return std::make_unique<RiverNode>(id);
     if (type == "rivercarve") return std::make_unique<RiverCarveNode>(id);
     if (type == "export") return std::make_unique<ExportNode>(id);
@@ -130,7 +137,8 @@ std::vector<std::string> registeredNodeTypes() {
             "blend",          "invert",    "clamp",     "remap",
             "blur",           "warp",      "hydraulic", "dropleterosion",
             "erosionfilter",  "river",     "rivercarve", "export",
-            "thermal",        "terrace",   "normalize", "slopemask"};
+            "thermal",        "terrace",   "normalize", "slopemask",
+            "fluvial"};
 }
 
 } // namespace theia

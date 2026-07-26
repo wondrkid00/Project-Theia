@@ -70,13 +70,14 @@ bool HydraulicErosionNode::evaluate(GPUContext& ctx,
     HydroParamsGPU P{};
     P.width = W;
     P.height = H;
+    float terrainSize = 1024.0f;
     if (!finiteParam(params, "dt", 0.015, P.dt, error) ||
         !finiteParam(params, "rain", 0.010, P.rain, error) ||
         !finiteParam(params, "evaporation", 0.020, P.evaporation, error) ||
         !finiteParam(params, "gravity", 9.81, P.gravity, error) ||
         !finiteParam(params, "pipeArea", 1.0, P.pipeArea, error) ||
         !finiteParam(params, "pipeLength", 1.0, P.pipeLength, error) ||
-        !finiteParam(params, "cellSize", 1.0, P.cellSize, error) ||
+        !finiteParam(params, "terrainSize", 1024.0, terrainSize, error) ||
         !finiteParam(params, "sedimentCapacity", 0.65, P.sedimentCap, error) ||
         !finiteParam(params, "suspension", 0.60, P.suspension, error) ||
         !finiteParam(params, "deposition", 0.45, P.deposition, error) ||
@@ -93,7 +94,13 @@ bool HydraulicErosionNode::evaluate(GPUContext& ctx,
     P.gravity = std::clamp(P.gravity, 0.0f, 20.0f);
     P.pipeArea = std::clamp(P.pipeArea, 0.05f, 4.0f);
     P.pipeLength = std::clamp(P.pipeLength, 0.05f, 4.0f);
-    P.cellSize = std::clamp(P.cellSize, 0.05f, 4.0f);
+    // Ground spacing is derived from the terrain's world width and the grid, so
+    // the solver's length system no longer shifts with resolution. The upper
+    // bound spans the derived range for authored sizes across usable grids;
+    // small cells stay bounded below because they tighten the Courant limit.
+    terrainSize = std::clamp(terrainSize, 1.0f, 65536.0f);
+    P.cellSize = std::clamp(terrainSize / float(std::max(1u, W - 1)),
+                            0.05f, 64.0f);
     P.sedimentCap = std::clamp(P.sedimentCap, 0.0f, 4.0f);
     P.suspension = std::clamp(P.suspension, 0.0f, 4.0f);
     P.deposition = std::clamp(P.deposition, 0.0f, 4.0f);

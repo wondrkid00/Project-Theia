@@ -25,8 +25,14 @@ enum NodeTypeCatalog {
                       types: ["blur", "warp"]),
         NodeTypeGroup(id: "mask", title: "Mask", systemImage: "circle.lefthalf.filled",
                       types: ["slopemask", "invert", "clamp", "remap"]),
+        // `fluvial` leads: it is the only erosion node driven by upstream
+        // drainage area, so it is the one that produces branching valley
+        // networks. The storm-scale and particle models follow as legacy.
         NodeTypeGroup(id: "erosion", title: "Erosion", systemImage: "drop.triangle",
-                      types: ["erosionfilter", "hydraulic", "thermal", "dropleterosion"]),
+                      types: ["fluvial", "thermal", "erosionfilter"]),
+        NodeTypeGroup(id: "erosionLegacy", title: "Erosion (Legacy)",
+                      systemImage: "clock.arrow.circlepath",
+                      types: ["hydraulic", "dropleterosion"]),
         NodeTypeGroup(id: "river", title: "River", systemImage: "water.waves",
                       types: ["river", "rivercarve"]),
         NodeTypeGroup(id: "output", title: "Output", systemImage: "square.and.arrow.up",
@@ -63,6 +69,8 @@ enum NodeTypeCatalog {
         case "erosionfilter": return "Erosion Filter"
         case "rivercarve": return "River Carve"
         case "slopemask": return "Slope Mask"
+        case "fluvial": return "Fluvial Erosion"
+        case "hydraulic": return "Hydraulic (Legacy)"
         default:
             return type.prefix(1).uppercased() + type.dropFirst()
         }

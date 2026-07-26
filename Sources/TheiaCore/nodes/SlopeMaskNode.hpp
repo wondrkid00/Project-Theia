@@ -10,7 +10,9 @@ public:
         params.set("low", 15.0);          // degrees: mask starts ramping here
         params.set("high", 50.0);         // degrees: fully masked at/above
         params.set("heightScale", 100.0); // vertical exaggeration for the slope calc
-        params.set("cellSize", 1.0);      // horizontal spacing per cell
+        // World width of the whole terrain. Ground spacing is derived from this
+        // and the grid, so slope is resolution-independent.
+        params.set("terrainSize", 1024.0);
     }
     std::size_t inputCount() const override { return 1; }
     bool evaluate(GPUContext& ctx,

@@ -13,7 +13,7 @@ public:
         params.set("iterations", 60);
         params.set("talusAngle", 24.0);   // degrees (~angle of repose)
         params.set("strength", 0.6);      // fraction of excess shed per step
-        params.set("cellSize", 1.0);
+        params.set("terrainSize", 1024.0); // world width; spacing = size/(W-1)
         params.set("heightScale", 64.0);
     }
     std::size_t inputCount() const override { return 1; }
