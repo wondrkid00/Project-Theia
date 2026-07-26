@@ -52,11 +52,6 @@ final class TerrainEngine {
         theia.graph_load_json_text(handle, text)
     }
 
-    var hasMaterialStack: Bool {
-        readCxxLongString { theia.graph_material_stack_json(handle, $0, $1) }
-            != "null"
-    }
-
     func setGraphPath(_ path: String?) {
         graphPath = path
         lastGraphMTime = graphModificationDate()

@@ -168,25 +168,6 @@ GraphEvalResult graph_evaluate_heights_output(
     std::uint32_t width, std::uint32_t height,
     float* dst, std::size_t capElems);
 
-// Canonical JSON for the optional semantic materialStack. Returns "null" when
-// no stack is configured.
-std::size_t graph_material_stack_json(GraphHandle* g,
-                                      char* out, std::size_t cap);
-
-// Evaluate the semantic material stack. `terrainDst` receives width*height
-// floats and `weightsRGBADst` receives width*height*4 interleaved normalized
-// floats when the corresponding destination and capacity are provided. Each
-// requested dimension is limited to 4096 texels.
-GraphEvalResult graph_evaluate_material_stack(
-    GraphHandle* g, std::uint32_t width, std::uint32_t height,
-    float* terrainDst, std::size_t terrainCapElems,
-    float* weightsRGBADst, std::size_t weightsCapElems);
-
-// Diagnostic/test API; application behavior must not depend on this counter.
-// It increments only when normalized material weights are rebuilt, not when
-// the derived-weight cache is reused.
-std::uint64_t graph_material_weights_build_count(GraphHandle* g);
-
 // Production export helper. Any path may be nullptr/"" to skip that output.
 // `maskPngPath` writes the selected sink normalized over [0,1], intended for
 // mask nodes. `objPath` writes a one-sided +Y-up terrain mesh.
@@ -226,29 +207,12 @@ struct GraphExportOptions {
     std::uint32_t meshStride = 1;
 };
 
-struct GraphMaterialExportOptions {
-    std::uint32_t width = 0;
-    std::uint32_t height = 0;
-    const char* outDir = nullptr;
-    const char* basename = nullptr;
-    HeightmapFormat heightmapFormat = HeightmapFormat::png16;
-    MeshFormat meshFormat = MeshFormat::obj;
-    float verticalScale = 1.0f;
-    std::uint32_t meshStride = 1;
-};
-
 // Structured export helper. Writes engine-facing scalar and mesh outputs.
 // Legacy/default output filenames keep `_height`; an explicit non-height
 // output uses `_<outputName>`. R16 is little-endian unsigned 16-bit.
 //   obj   -> <basename>.obj
 // OBJ is valid only when the selected output resolves to terrain.
 GraphEvalResult graph_export2(GraphHandle* g, const GraphExportOptions& options);
-
-// Transactional material bundle export. Writes the stack terrain artifact(s),
-// `<basename>_weights.png`, and `<basename>_material.json`. Each requested
-// dimension is limited to 4096 texels.
-GraphEvalResult graph_export_material_bundle(
-    GraphHandle* g, const GraphMaterialExportOptions& options);
 
 // Node/parameter enumeration for the viewer inspector. Strings use the same
 // copy-into-caller-buffer convention as the other Swift-facing accessors.

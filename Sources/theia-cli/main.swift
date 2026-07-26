@@ -103,10 +103,6 @@ private func usage() -> String {
              [--basename NAME] [--heightmap png16|r16|pfm32|none]
              [--mesh obj|none] [--vertical-scale V] [--mesh-stride S]
                                       Export engine-ready heightmap and mesh.
-      export-material GRAPH.json [--size N] [--out-dir DIR] [--basename NAME]
-             [--heightmap png16|r16|pfm32|none] [--mesh obj|none]
-             [--vertical-scale V] [--mesh-stride S]
-                                      Export material weights + manifest bundle.
       smoke [count] [value]           Run the Metal smoke test.
       demo [--size N] [--out PATH] [--seed S]
                                       Generate standalone Perlin terrain.
@@ -672,152 +668,12 @@ private func commandExport(args: [String], options: GlobalOptions) throws -> Int
     return r.ok ? 0 : 1
 }
 
-private func graphExportMaterial(
-    graph: OpaquePointer,
-    size: UInt32,
-    outDir: String,
-    basename: String,
-    heightmap: String,
-    mesh: String,
-    verticalScale: Float,
-    meshStride: UInt32
-) -> theia.GraphEvalResult {
-    func heightFormat(_ value: String) -> theia.HeightmapFormat {
-        switch value {
-        case "none": return theia.HeightmapFormat.none
-        case "png16": return theia.HeightmapFormat.png16
-        case "r16": return theia.HeightmapFormat.r16
-        case "pfm32": return theia.HeightmapFormat.pfm32
-        default: return theia.HeightmapFormat.none
-        }
-    }
-    func meshFormat(_ value: String) -> theia.MeshFormat {
-        value == "obj" ? theia.MeshFormat.obj : theia.MeshFormat.none
-    }
-    return outDir.withCString { outPtr in
-        basename.withCString { basePtr in
-            var options = theia.GraphMaterialExportOptions()
-            options.width = size
-            options.height = size
-            options.outDir = outPtr
-            options.basename = basePtr
-            options.heightmapFormat = heightFormat(heightmap)
-            options.meshFormat = meshFormat(mesh)
-            options.verticalScale = verticalScale
-            options.meshStride = meshStride
-            return theia.graph_export_material_bundle(graph, options)
-        }
-    }
-}
-
-private func commandExportMaterial(args: [String], options: GlobalOptions) throws -> Int32 {
-    guard let path = args.first, !path.hasPrefix("--") else {
-        throw CLIError.usage(
-            "usage: theia-cli export-material GRAPH.json [--heightmap png16|r16|pfm32|none] [--mesh obj|none]"
-        )
-    }
-    var size: UInt32 = 1024
-    var outDir = "."
-    var basename = URL(fileURLWithPath: path).deletingPathExtension().lastPathComponent
-    var heightmap = "png16"
-    var mesh = "obj"
-    var verticalScale: Float = 1.0
-    var meshStride: UInt32 = 1
-    var i = 1
-    while i < args.count {
-        switch args[i] {
-        case "--size":
-            size = try parseUInt32(try requireValue(args, i, "--size"),
-                                   flag: "--size", min: 2)
-            i += 2
-        case "--out-dir":
-            outDir = try requireValue(args, i, "--out-dir")
-            i += 2
-        case "--basename":
-            basename = try requireValue(args, i, "--basename")
-            i += 2
-        case "--heightmap":
-            heightmap = try requireValue(args, i, "--heightmap")
-            guard ["png16", "r16", "pfm32", "none"].contains(heightmap) else {
-                throw CLIError.usage("--heightmap must be png16, r16, pfm32, or none")
-            }
-            i += 2
-        case "--mesh":
-            mesh = try requireValue(args, i, "--mesh")
-            guard ["obj", "none"].contains(mesh) else {
-                throw CLIError.usage("--mesh must be obj or none")
-            }
-            i += 2
-        case "--vertical-scale":
-            verticalScale = try parseFloat(
-                try requireValue(args, i, "--vertical-scale"),
-                flag: "--vertical-scale", minExclusive: 0
-            )
-            i += 2
-        case "--mesh-stride":
-            meshStride = try parseUInt32(
-                try requireValue(args, i, "--mesh-stride"),
-                flag: "--mesh-stride", min: 1
-            )
-            i += 2
-        default:
-            throw CLIError.usage("unknown option for export-material: \(args[i])")
-        }
-    }
-
-    let graph = try loadGraph(path: path)
-    defer { theia.graph_destroy(graph) }
-    let result = graphExportMaterial(
-        graph: graph, size: size, outDir: outDir, basename: basename,
-        heightmap: heightmap, mesh: mesh,
-        verticalScale: verticalScale, meshStride: meshStride
-    )
-    let error = readCxxString { theia.graph_last_error(graph, $0, $1) }
-    let directory = URL(fileURLWithPath: outDir)
-    func file(_ suffix: String) -> String {
-        directory.appendingPathComponent("\(basename)\(suffix)").path
-    }
-    var paths: [String: String] = [
-        "weights": file("_weights.png"),
-        "manifest": file("_material.json"),
-    ]
-    switch heightmap {
-    case "png16": paths["heightmap"] = file("_height.png")
-    case "r16": paths["heightmap"] = file("_height.r16")
-    case "pfm32": paths["heightmap"] = file("_height.pfm")
-    default: break
-    }
-    if mesh == "obj" { paths["mesh"] = file(".obj") }
-
-    if options.json {
-        emitJSON([
-            "ok": result.ok,
-            "graph": path,
-            "stats": statsObject(result),
-            "paths": paths,
-            "error": error,
-        ])
-    } else if !options.quiet {
-        print(result.ok ? "Exported material bundle \(path)" : "Material export failed")
-        if result.ok {
-            print("  resolution: \(result.width)x\(result.height)")
-            print("  range:      [\(result.minHeight), \(result.maxHeight)]")
-            for key in paths.keys.sorted() {
-                print("  \(key): \(paths[key] ?? "")")
-            }
-        } else {
-            print("  error: \(error)")
-        }
-    }
-    return result.ok ? 0 : 1
-}
-
 private func diagnosticSource(path: String, sink: String) throws -> String {
     let text = try String(contentsOfFile: path, encoding: .utf8)
     guard !sink.isEmpty,
           let data = text.data(using: .utf8),
           let object = try? JSONSerialization.jsonObject(with: data),
-    var dict = object as? [String: Any],
+          var dict = object as? [String: Any],
           JSONSerialization.isValidJSONObject(dict) else {
         return text
     }
@@ -930,8 +786,6 @@ private func runMain() -> Int32 {
             return try commandRun(args: commandArgs, options: options)
         case "export":
             return try commandExport(args: commandArgs, options: options)
-        case "export-material":
-            return try commandExportMaterial(args: commandArgs, options: options)
         case "diagnose":
             return try commandDiagnose(args: commandArgs, options: options)
         case "help":

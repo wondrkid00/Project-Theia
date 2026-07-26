@@ -13,11 +13,6 @@ struct Uniforms {
     var terrainParams: SIMD4<Float>
     var brushParams: SIMD4<Float>
     var gridParams: SIMD4<UInt32>
-    var materialColor0: SIMD4<Float>
-    var materialColor1: SIMD4<Float>
-    var materialColor2: SIMD4<Float>
-    var materialColor3: SIMD4<Float>
-    var materialParams: SIMD4<Float>
 }
 
 struct LineVertex {
@@ -41,7 +36,6 @@ final class Renderer {
 
     private var heightBuffer: MTLBuffer?
     private var dataBuffer: MTLBuffer?
-    private var weightBuffer: MTLBuffer?
     private var indexBuffer: MTLBuffer?
     private var gridLineBuffer: MTLBuffer?
     private var axisLineBuffer: MTLBuffer?
@@ -50,10 +44,6 @@ final class Renderer {
     private var axisLineVertexCount = 0
     private(set) var gridW: UInt32 = 0
     private(set) var gridH: UInt32 = 0
-    // Material weights keep their own dimensions: they are sampled by UV in the
-    // fragment shader and are not tied to the decimated display mesh.
-    private var weightGridW: UInt32 = 0
-    private var weightGridH: UInt32 = 0
     private let maxViewerGrid = 768
 
     var camera = OrbitCamera.framed(heightExaggeration: 0.5)
@@ -62,24 +52,6 @@ final class Renderer {
     private var lightElevationDegrees: Float = 58.0
     private var displayMode: ViewportDisplayMode = .terrain
     private var materialPreset: MaterialPreset = .natural
-    // Material colors cross the CPU/GPU boundary in linear light. The document
-    // retains its public sRGB values; converting once here avoids four transfer
-    // function `pow` calls for every rendered fragment.
-    private var materialColors: [SIMD4<Float>] = [
-        SIMD4<Float>(Float(MaterialPreviewMath.srgbToLinear(0.42)),
-                     Float(MaterialPreviewMath.srgbToLinear(0.35)),
-                     Float(MaterialPreviewMath.srgbToLinear(0.26)), 1),
-        SIMD4<Float>(Float(MaterialPreviewMath.srgbToLinear(0.46)),
-                     Float(MaterialPreviewMath.srgbToLinear(0.45)),
-                     Float(MaterialPreviewMath.srgbToLinear(0.42)), 1),
-        SIMD4<Float>(Float(MaterialPreviewMath.srgbToLinear(0.18)),
-                     Float(MaterialPreviewMath.srgbToLinear(0.42)),
-                     Float(MaterialPreviewMath.srgbToLinear(0.62)), 1),
-        SIMD4<Float>(Float(MaterialPreviewMath.srgbToLinear(0.86)),
-                     Float(MaterialPreviewMath.srgbToLinear(0.88)),
-                     Float(MaterialPreviewMath.srgbToLinear(0.90)), 1)
-    ]
-    private var usesMaterialWeights = false
     private(set) var previewUploadCount: UInt64 = 0
     private var maskOpacity: Float = 0.65
     private var terrainBaseHeight: Float = 0
@@ -150,7 +122,7 @@ final class Renderer {
                    dataMatchesHeights: true)
     }
 
-    func setPreview(heights: [Float], data: [Float], weightsRGBA: [Float]? = nil,
+    func setPreview(heights: [Float], data: [Float],
                     width: Int, height: Int, dataMatchesHeights: Bool = false) {
         guard width > 1, height > 1, heights.count >= width * height else { return }
         previewUploadCount &+= 1
@@ -163,12 +135,6 @@ final class Renderer {
             let sourceData = data.count >= width * height ? data : heights
             sampledData = Self.viewerHeights(sourceData, width: width, height: height,
                                              maxGrid: maxViewerGrid)
-        }
-        // Weights stay at full evaluation resolution. The fragment shader
-        // samples them by UV, so material detail is no longer limited by the
-        // display mesh and the preview matches the exported weights PNG.
-        let sampledWeights: [Float]? = weightsRGBA.flatMap {
-            $0.count >= width * height * 4 ? $0 : nil
         }
         terrainBaseHeight = sampledHeights.values.min() ?? 0
         surfaceHeights = sampledHeights.values
@@ -187,28 +153,6 @@ final class Renderer {
                                                 MemoryLayout<Float>.stride,
                                            options: .storageModeShared)
         }
-        if let sampledWeights {
-            weightBuffer = device.makeBuffer(bytes: sampledWeights,
-                                             length: sampledWeights.count *
-                                                MemoryLayout<Float>.stride,
-                                             options: .storageModeShared)
-            weightGridW = UInt32(width)
-            weightGridH = UInt32(height)
-            usesMaterialWeights = true
-        } else {
-            // Allocate the base-only buffer only for scalar previews. Material
-            // previews already own packed weights, so they no longer pay for a
-            // second throwaway RGBA allocation and fill.
-            let fallbackWeights = Self.materialFallbackWeights(
-                texelCount: sampledHeights.width * sampledHeights.height)
-            weightBuffer = device.makeBuffer(bytes: fallbackWeights,
-                                             length: fallbackWeights.count *
-                                                MemoryLayout<Float>.stride,
-                                             options: .storageModeShared)
-            weightGridW = UInt32(sampledHeights.width)
-            weightGridH = UInt32(sampledHeights.height)
-            usesMaterialWeights = false
-        }
         if gridW != UInt32(sampledHeights.width) || gridH != UInt32(sampledHeights.height) ||
             indexBuffer == nil {
             buildIndices(width: sampledHeights.width, height: sampledHeights.height)
@@ -216,30 +160,6 @@ final class Renderer {
             gridH = UInt32(sampledHeights.height)
         }
         invalidateDisplay()
-    }
-
-    func setMaterialColors(_ colorsSRGB: [[Double]]) {
-        for index in 0..<4 {
-            if index < colorsSRGB.count, colorsSRGB[index].count == 3 {
-                let linear = MaterialPreviewMath.srgbToLinear(colorsSRGB[index])
-                materialColors[index] = SIMD4<Float>(
-                    Float(linear[0]), Float(linear[1]), Float(linear[2]), 1)
-            }
-        }
-        invalidateDisplay()
-    }
-
-    static func materialFallbackWeights(texelCount: Int) -> [Float] {
-        [Float](unsafeUninitializedCapacity: max(0, texelCount) * 4) {
-            buffer, initializedCount in
-            for index in stride(from: 0, to: buffer.count, by: 4) {
-                buffer[index] = 1
-                buffer[index + 1] = 0
-                buffer[index + 2] = 0
-                buffer[index + 3] = 0
-            }
-            initializedCount = buffer.count
-        }
     }
 
     private static func viewerHeights(_ heights: [Float], width: Int, height: Int,
@@ -340,16 +260,8 @@ final class Renderer {
                          terrainParams: SIMD4<Float>(terrainBaseHeight, 0, 0, 0),
                          brushParams: SIMD4<Float>(brushCenterUV.x, brushCenterUV.y,
                                                    brushRadius, brushVisible ? 1 : 0),
-                         gridParams: SIMD4<UInt32>(gridW, gridH, 0, 0),
-                         materialColor0: materialColors[0],
-                         materialColor1: materialColors[1],
-                         materialColor2: materialColors[2],
-                         materialColor3: materialColors[3],
-                         materialParams: SIMD4<Float>(usesMaterialWeights ? 1 : 0,
-                                                      Float(weightGridW),
-                                                      Float(weightGridH), 0))
-        if let hb = heightBuffer, let db = dataBuffer, let wb = weightBuffer,
-           let ib = indexBuffer,
+                         gridParams: SIMD4<UInt32>(gridW, gridH, 0, 0))
+        if let hb = heightBuffer, let db = dataBuffer, let ib = indexBuffer,
            indexCount > 0 {
             enc.setRenderPipelineState(pipeline)
             enc.setDepthStencilState(depthState)
@@ -360,7 +272,6 @@ final class Renderer {
             enc.setVertexBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 1)
             enc.setVertexBuffer(db, offset: 0, index: 2)
             enc.setFragmentBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 1)
-            enc.setFragmentBuffer(wb, offset: 0, index: 3)
             enc.drawIndexedPrimitives(type: .triangle, indexCount: indexCount,
                                       indexType: .uint32, indexBuffer: ib,
                                       indexBufferOffset: 0)

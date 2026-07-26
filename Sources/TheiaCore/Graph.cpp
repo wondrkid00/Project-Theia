@@ -7,7 +7,6 @@
 
 #include "Hash.hpp"
 #include "Heightfield.hpp"
-#include "MaterialWeights.hpp"
 #include "Node.hpp"
 #include "json.hpp"
 
@@ -53,26 +52,6 @@ void migrateLegacySlopeMaskDefaults(Node& n) {
         n.params.set("high", 50.0);
         n.params.set("heightScale", 100.0);
     }
-}
-
-json outputReferenceJSON(const GraphOutputReference& reference) {
-    return {{"node", reference.node}, {"output", reference.output}};
-}
-
-json materialStackJSONValue(const MaterialStack& stack) {
-    json encoded;
-    encoded["terrain"] = outputReferenceJSON(stack.terrain);
-    encoded["layers"] = json::array();
-    for (const MaterialLayer& layer : stack.layers) {
-        json item = {
-            {"id", layer.id},
-            {"name", layer.name},
-            {"previewColorSRGB", layer.previewColorSRGB}
-        };
-        if (layer.source) item["source"] = outputReferenceJSON(*layer.source);
-        encoded["layers"].push_back(std::move(item));
-    }
-    return encoded;
 }
 
 } // namespace
@@ -352,148 +331,6 @@ bool Graph::resolvedOutputKind(const std::string& id,
     return ok;
 }
 
-std::string Graph::materialStackJSON() const {
-    return materialStack_ ? materialStackJSONValue(*materialStack_).dump(2)
-                          : std::string("null");
-}
-
-bool Graph::validateMaterialStack(std::string& error) const {
-    if (!materialStack_) {
-        error = "graph has no materialStack";
-        return false;
-    }
-    FieldKind terrainKind = FieldKind::data;
-    if (!resolvedOutputKind(materialStack_->terrain.node,
-                            materialStack_->terrain.output,
-                            terrainKind, error)) {
-        error = "materialStack terrain: " + error;
-        return false;
-    }
-    if (terrainKind != FieldKind::terrain) {
-        error = "materialStack terrain '" + materialStack_->terrain.node + "." +
-                materialStack_->terrain.output + "' resolves to " +
-                fieldKindName(terrainKind);
-        return false;
-    }
-    for (std::size_t i = 1; i < materialStack_->layers.size(); ++i) {
-        const MaterialLayer& layer = materialStack_->layers[i];
-        if (!layer.source) {
-            error = "material layer '" + layer.id + "' has no source";
-            return false;
-        }
-        FieldKind sourceKind = FieldKind::terrain;
-        if (!resolvedOutputKind(layer.source->node, layer.source->output,
-                                sourceKind, error)) {
-            error = "material layer '" + layer.id + "': " + error;
-            return false;
-        }
-        if (sourceKind != FieldKind::mask && sourceKind != FieldKind::data) {
-            error = "material layer '" + layer.id + "' source '" +
-                    layer.source->node + "." + layer.source->output +
-                    "' resolves to " + fieldKindName(sourceKind) +
-                    "; expected mask or data";
-            return false;
-        }
-    }
-    return true;
-}
-
-bool Graph::evaluateMaterialStack(GPUContext& ctx, std::uint32_t w,
-                                  std::uint32_t h,
-                                  std::vector<float>& terrain,
-                                  const std::vector<float>*& weightsRGBA,
-                                  EvalStats& stats, std::string& error) {
-    stats = {};
-    weightsRGBA = nullptr;
-    if (!validateMaterialStack(error)) return false;
-    const MaterialStack& stack = *materialStack_;
-    const std::size_t count = std::size_t(w) * h;
-    if (count > std::numeric_limits<std::size_t>::max() / 4) {
-        error = "material resolution overflows the RGBA element count";
-        return false;
-    }
-
-    EvalStats passStats;
-    const Heightfield* terrainField = evaluate(ctx, stack.terrain.node,
-                                               stack.terrain.output,
-                                               w, h, passStats, error);
-    if (!terrainField) return false;
-    stats.evaluated += passStats.evaluated;
-    stats.reused += passStats.reused;
-    terrain.assign(terrainField->data(), terrainField->data() + count);
-
-    struct SourceView {
-        const Heightfield* field = nullptr;
-        std::uint64_t outputKey = 0;
-    };
-    std::map<std::string, SourceView> sourceViews;
-    std::array<const float*, 3> overlayPointers{};
-    std::array<std::string, 3> layerIds{};
-    std::vector<std::uint64_t> orderedSourceKeys;
-    if (stack.layers.size() > 1) {
-        orderedSourceKeys.reserve(stack.layers.size() - 1);
-    }
-    for (std::size_t layerIndex = 1; layerIndex < stack.layers.size(); ++layerIndex) {
-        const MaterialLayer& layer = stack.layers[layerIndex];
-        const GraphOutputReference& source = *layer.source;
-        const std::string key = source.node + "\n" + source.output;
-        auto viewIt = sourceViews.find(key);
-        if (viewIt == sourceViews.end()) {
-            const Heightfield* field = evaluate(ctx, source.node, source.output,
-                                                w, h, passStats, error);
-            if (!field) return false;
-            stats.evaluated += passStats.evaluated;
-            stats.reused += passStats.reused;
-
-            // evaluate() owns the returned field through cache_. The graph is
-            // immutable for this call and every source uses the same
-            // resolution, so evaluating later sinks cannot replace a
-            // previously returned source entry with a different key. The
-            // pointers remain valid until packing finishes.
-            auto nodeIt = nodes_.find(source.node);
-            auto cacheIt = cache_.find(source.node);
-            std::size_t sourceOutputIndex = 0;
-            if (nodeIt == nodes_.end() || cacheIt == cache_.end() ||
-                !outputIndex(*nodeIt->second, source.output,
-                             sourceOutputIndex, error) ||
-                sourceOutputIndex >= cacheIt->second.outputKeys.size()) {
-                error = "internal: material source output key is unavailable for '" +
-                        source.node + "." + source.output + "'";
-                return false;
-            }
-            viewIt = sourceViews.emplace(
-                key, SourceView{field,
-                                cacheIt->second.outputKeys[sourceOutputIndex]}).first;
-        }
-        overlayPointers[layerIndex - 1] = viewIt->second.field->data();
-        layerIds[layerIndex - 1] = layer.id;
-        orderedSourceKeys.push_back(viewIt->second.outputKey);
-    }
-
-    const bool cacheHit = materialWeightsCache_.valid &&
-        materialWeightsCache_.width == w &&
-        materialWeightsCache_.height == h &&
-        materialWeightsCache_.layerCount == stack.layers.size() &&
-        materialWeightsCache_.sourceOutputKeys == orderedSourceKeys &&
-        materialWeightsCache_.weightsRGBA.size() == count * 4;
-    if (!cacheHit) {
-        std::vector<float> builtWeights;
-        if (!buildMaterialWeights(overlayPointers, layerIds, count,
-                                  builtWeights, error)) {
-            return false;
-        }
-        materialWeightsCache_.valid = true;
-        materialWeightsCache_.width = w;
-        materialWeightsCache_.height = h;
-        materialWeightsCache_.layerCount = stack.layers.size();
-        materialWeightsCache_.sourceOutputKeys = std::move(orderedSourceKeys);
-        materialWeightsCache_.weightsRGBA = std::move(builtWeights);
-        ++materialWeightsBuildCount_;
-    }
-    weightsRGBA = &materialWeightsCache_.weightsRGBA;
-    return true;
-}
-
 std::uint64_t Graph::maskEditSignature(const std::string& id,
                                        const std::string& output) const {
     auto nodeIt = maskErases_.find(id);
@@ -709,7 +546,7 @@ void Graph::setDefaults(const std::string& sink, std::uint32_t w, std::uint32_t 
 
 std::string Graph::toJSON() const {
     json j;
-    j["formatVersion"] = 3;
+    j["formatVersion"] = 2;
     j["resolution"] = {{"width", defaultWidth_}, {"height", defaultHeight_}};
     if (!defaultSink_.empty()) {
         j["sink"] = defaultSink_;
@@ -738,10 +575,6 @@ std::string Graph::toJSON() const {
                 {{"from", srcs[p].node}, {"output", srcs[p].output},
                  {"to", toId}, {"input", p}});
         }
-    }
-
-    if (materialStack_) {
-        j["materialStack"] = materialStackJSONValue(*materialStack_);
     }
 
     json ui = json::parse(uiMetadataJSON_, nullptr, /*allow_exceptions=*/false);
@@ -823,6 +656,9 @@ bool Graph::fromJSON(const std::string& text, std::string& error) {
     std::uint32_t formatVersion = 1;
     if (j.contains("formatVersion")) {
         if (!readOptionalU32(j, "formatVersion", formatVersion, "graph")) return false;
+        // Version 3 documents may have been written by an older Theia build.
+        // Its unsupported extension fields are intentionally ignored, and the
+        // document is normalized to the current version when serialized.
         if (formatVersion < 1 || formatVersion > 3) {
             error = "unsupported graph formatVersion " + std::to_string(formatVersion);
             return false;
@@ -930,113 +766,6 @@ bool Graph::fromJSON(const std::string& text, std::string& error) {
             if (!next.connect(from, output, to, input, error)) return false;
         }
     }
-    if (j.contains("materialStack")) {
-        if (formatVersion < 3) {
-            error = "materialStack requires graph formatVersion 3";
-            return false;
-        }
-        const auto& encodedStack = j["materialStack"];
-        if (!encodedStack.is_object()) {
-            error = "materialStack must be an object";
-            return false;
-        }
-        auto readReference = [&](const json& value,
-                                 GraphOutputReference& reference,
-                                 const std::string& context) -> bool {
-            if (!value.is_object()) {
-                error = context + " must be an object";
-                return false;
-            }
-            if (!readString(value, "node", reference.node, context) ||
-                !readString(value, "output", reference.output, context)) {
-                return false;
-            }
-            if (reference.node.empty() || reference.output.empty()) {
-                error = context + " node/output must not be empty";
-                return false;
-            }
-            return true;
-        };
-
-        MaterialStack stack;
-        if (!encodedStack.contains("terrain") ||
-            !readReference(encodedStack["terrain"], stack.terrain,
-                           "materialStack terrain")) {
-            return false;
-        }
-        if (!encodedStack.contains("layers") ||
-            !encodedStack["layers"].is_array()) {
-            error = "materialStack layers must be an array";
-            return false;
-        }
-        const auto& encodedLayers = encodedStack["layers"];
-        if (encodedLayers.empty() || encodedLayers.size() > 4) {
-            error = "materialStack requires 1 to 4 layers";
-            return false;
-        }
-        std::map<std::string, bool> layerIds;
-        for (std::size_t index = 0; index < encodedLayers.size(); ++index) {
-            const auto& encodedLayer = encodedLayers[index];
-            if (!encodedLayer.is_object()) {
-                error = "materialStack layer entries must be objects";
-                return false;
-            }
-            MaterialLayer layer;
-            const std::string context = "materialStack layer " +
-                                        std::to_string(index);
-            if (!readString(encodedLayer, "id", layer.id, context) ||
-                !readString(encodedLayer, "name", layer.name, context)) {
-                return false;
-            }
-            if (layer.id.empty() || layer.name.empty()) {
-                error = context + " id/name must not be empty";
-                return false;
-            }
-            if (layerIds.count(layer.id)) {
-                error = "duplicate material layer id '" + layer.id + "'";
-                return false;
-            }
-            layerIds[layer.id] = true;
-            if (!encodedLayer.contains("previewColorSRGB") ||
-                !encodedLayer["previewColorSRGB"].is_array() ||
-                encodedLayer["previewColorSRGB"].size() != 3) {
-                error = context + " previewColorSRGB must contain 3 numbers";
-                return false;
-            }
-            for (std::size_t channel = 0; channel < 3; ++channel) {
-                const auto& value = encodedLayer["previewColorSRGB"][channel];
-                if (!value.is_number()) {
-                    error = context + " previewColorSRGB must contain numbers";
-                    return false;
-                }
-                const double component = value.get<double>();
-                if (!std::isfinite(component) || component < 0.0 || component > 1.0) {
-                    error = context + " previewColorSRGB must be finite in [0,1]";
-                    return false;
-                }
-                layer.previewColorSRGB[channel] = component;
-            }
-            if (index == 0) {
-                if (encodedLayer.contains("source")) {
-                    error = "materialStack base layer must not have a source";
-                    return false;
-                }
-            } else if (encodedLayer.contains("source")) {
-                // A missing overlay source is a repairable semantic state
-                // produced when authoring removes the referenced node. If a
-                // source field is present, however, it remains structurally
-                // strict and must contain a valid reference object.
-                GraphOutputReference source;
-                if (!readReference(encodedLayer["source"], source,
-                                   context + " source")) {
-                    return false;
-                }
-                layer.source = std::move(source);
-            }
-            stack.layers.push_back(std::move(layer));
-        }
-        next.materialStack_ = std::move(stack);
-    }
     if (j.contains("ui")) {
         next.uiMetadataJSON_ = j["ui"].dump();
         const auto& ui = j["ui"];
@@ -1118,7 +847,6 @@ bool Graph::fromJSON(const std::string& text, std::string& error) {
     nodes_ = std::move(next.nodes_);
     inputs_ = std::move(next.inputs_);
     maskErases_ = std::move(next.maskErases_);
-    materialStack_ = std::move(next.materialStack_);
     uiMetadataJSON_ = std::move(next.uiMetadataJSON_);
     defaultSink_ = std::move(next.defaultSink_);
     defaultSinkOutput_ = std::move(next.defaultSinkOutput_);

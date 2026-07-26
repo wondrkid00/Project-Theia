@@ -440,7 +440,7 @@ kernel void fluvial_boundary(device float*             field [[buffer(0)]],
 
 // Normalized log-scaled flow accumulation, exposed as a data output. Drainage
 // area is heavy-tailed, so a linear encoding would show only the trunk stream;
-// log compression makes the whole network legible as a mask or material source.
+// log compression makes the whole network legible as a mask or analysis source.
 kernel void fluvial_flow_output(device float*             out [[buffer(0)]],
                                 device const float*       area [[buffer(1)]],
                                 constant FluvialParams&   P [[buffer(2)]],

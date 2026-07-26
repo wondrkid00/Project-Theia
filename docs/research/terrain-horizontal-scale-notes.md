@@ -1,7 +1,7 @@
 # Terrain Horizontal Scale Reference Audit
 
 Status: **approved for Phase 9 stabilization**
-Reviewed: 2026-07-26 (material layer stack defect audit)
+Reviewed: 2026-07-26 (resolution consistency audit)
 Scope: the ground spacing used by slope-derived operators — `slopemask`,
 `thermal`, and `hydraulic`. This note does not authorize a new simulation, a
 georeferencing/CRS model, anisotropic cell spacing, or a change to heightfield
@@ -12,8 +12,8 @@ normalization.
 Theia's slope operators divided finite differences by a `cellSize` parameter
 that defaulted to `1.0` and was interpreted as *one unit per texel*. Grid
 spacing therefore tracked the sampling grid rather than the terrain, so the same
-graph produced a different slope field at every resolution. Measured on
-`examples/material-stack.json`, the `steep` slope mask output range was:
+graph produced a different slope field at every resolution. The regression
+fixture measured this slope-mask output range:
 
 | Grid | `slopemask` output range |
 |---|---|
@@ -204,8 +204,8 @@ cell exactly at its own declared resolution.
   authored values.
 - `W <= 1` degenerates to a single interval so the estimator stays defined.
 - Grid resolution is supplied by the evaluation request, so all inputs to one
-  material or export pass share a single `terrainSize` and no resampling
-  boundary is introduced.
+  graph evaluation share a single `terrainSize` and no resampling boundary is
+  introduced.
 
 ## Executable invariant mapping
 
@@ -214,7 +214,6 @@ cell exactly at its own declared resolution.
 | Horn estimator | fixed 3×3 fixture reproduces the hand-computed gradient |
 | Units contract | doubling `terrainSize` and `heightScale` together leaves slope unchanged |
 | Resolution stability | mask coverage bounded across 128/256/512/1024 |
-| Material consequence | all four example channels hold non-trivial coverage at every tested grid |
 | Domain handling | non-finite and non-positive `terrainSize` rejected |
 | Legacy migration | `cellSize` documents load and reproduce 1024² behaviour |
 | Talus meaning | authored `talusAngle` yields consistent shedding across grids |

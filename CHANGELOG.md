@@ -9,7 +9,8 @@
   and a named flow-accumulation output.
 - Made slope-sensitive terrain processes use resolution-independent ground
   spacing, keeping slope masks, thermal erosion, hydraulic erosion, and
-  material previews consistent across authoring and export resolutions.
+  other slope-derived outputs consistent across authoring and export
+  resolutions.
 - Corrected nonlinear hillslope transport to operate in world units, restored
   the intended critical-slope response, and bounded the explicit diffusion
   step for stability.
@@ -28,35 +29,13 @@
 - Reorganized hydraulic authoring around rainfall, duration, capacity, erosion,
   and deposition; numerical timestep, slope floor, vertical scale, and virtual
   pipe geometry now use documented Advanced controls and safe slider ranges.
-- Hardened material evaluation and export with finite/dimension guards,
-  reusable packed-weight caching, durable checked writes, and transactional
-  rollback that preserves existing bundles after write or publish failures.
-- Refined material-layer authoring with explicit overlay sources, stable channel
-  identity, repairable dangling sources, coalesced background previews, and
-  color-only shader updates that avoid graph reevaluation.
-- Prevented composite material preview from exposing the scalar mask eraser and
-  reduced high-frequency camera and layer edits from invalidating unrelated
-  inspector or renderer state.
+- Reduced high-frequency camera edits from invalidating unrelated inspector or
+  renderer state.
 
 ## 0.11.0-alpha.1
 
-- Added graph format v3 with an optional semantic material stack: one terrain
-  reference, one base layer, and up to three mask/data overlays in stable RGBA
-  channel order. Existing v1/v2 graphs continue to migrate automatically.
-- Added audited finite/clamped material-weight normalization and deterministic
-  largest-remainder RGBA8 quantization whose channel bytes sum exactly to 255.
-- Added API v4 material-stack enumeration/readback and transactional bundle
-  export for terrain, optional OBJ, linear RGBA8 weights, and JSON manifest.
-- Added CLI `export-material` and a v3 example combining slope, river, and
-  `erosionfilter.ridge` sources.
 - Separated ephemeral viewer preview selection from persisted graph output,
   with an explicit **Set as Graph Output** action.
-- Added a global Material Layers authoring panel, semantic undo/redo,
-  mask/data-only source filtering, background evaluation with stale-result
-  dropping, and linear-light convex color blending in the Metal shader.
-- Added core and viewer coverage for migration, malformed/dangling references,
-  cache reuse, color transfer, material history, exact-sum export, CLI, and
-  offscreen visual rendering.
 
 ## 0.10.0-alpha.2
 

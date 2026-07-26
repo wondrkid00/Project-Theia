@@ -306,5 +306,5 @@ same shared-buffer samples that already determine the upstream content key;
   multiple octaves.
 - The filter works best over smooth broad landforms. Feeding detail-heavy fBm
   stacks unrelated high-frequency structures and can look noisy.
-- RGB/RGBA material layers and physically based erosion outputs are outside
+- Multi-channel surface shading and physically based erosion outputs are outside
   Phase 8.

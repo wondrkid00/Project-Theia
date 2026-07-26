@@ -39,10 +39,4 @@ bool writePNG8RGB(const char* path, const unsigned char* rgb,
                   std::uint32_t width, std::uint32_t height,
                   std::string& error);
 
-// Write top-row-first RGBA8 PNG data. The caller owns channel semantics; this
-// writer does not add an sRGB chunk, which keeps material weights linear.
-bool writePNG8RGBA(const char* path, const unsigned char* rgba,
-                   std::uint32_t width, std::uint32_t height,
-                   std::string& error);
-
 } // namespace theia

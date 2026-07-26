@@ -5,10 +5,8 @@
 // upstream output's hash changes). PRIVATE header.
 //
 #include <cstdint>
-#include <array>
 #include <map>
 #include <memory>
-#include <optional>
 #include <string>
 #include <vector>
 
@@ -22,23 +20,6 @@ class Heightfield;
 struct EvalStats {
     std::uint32_t evaluated = 0;  // nodes (re)computed this pass
     std::uint32_t reused = 0;     // nodes served from cache this pass
-};
-
-struct GraphOutputReference {
-    std::string node;
-    std::string output;
-};
-
-struct MaterialLayer {
-    std::string id;
-    std::string name;
-    std::array<double, 3> previewColorSRGB{0.5, 0.5, 0.5};
-    std::optional<GraphOutputReference> source;
-};
-
-struct MaterialStack {
-    GraphOutputReference terrain;
-    std::vector<MaterialLayer> layers;
 };
 
 class Graph {
@@ -99,21 +80,6 @@ public:
     bool resolvedOutputKind(const std::string& id, const std::string& outputName,
                             FieldKind& kind, std::string& error) const;
 
-    bool hasMaterialStack() const { return materialStack_.has_value(); }
-    const MaterialStack* materialStack() const {
-        return materialStack_ ? &*materialStack_ : nullptr;
-    }
-    std::string materialStackJSON() const;
-    bool validateMaterialStack(std::string& error) const;
-    bool evaluateMaterialStack(GPUContext& ctx, std::uint32_t w,
-                               std::uint32_t h,
-                               std::vector<float>& terrain,
-                               const std::vector<float>*& weightsRGBA,
-                               EvalStats& stats, std::string& error);
-    std::uint64_t materialWeightsBuildCount() const {
-        return materialWeightsBuildCount_;
-    }
-
 private:
     // Post-order DFS from `sinkId` over connected inputs => topological order
     // (dependencies first). Detects cycles and missing nodes.
@@ -140,18 +106,6 @@ private:
         std::vector<FieldKind> outputKinds;
     };
 
-    // Material weights are derived solely from the ordered scalar source
-    // contents. Names and preview colors deliberately do not participate so a
-    // semantic-only graph reload can reuse the packed result.
-    struct MaterialWeightsCacheEntry {
-        bool valid = false;
-        std::uint32_t width = 0;
-        std::uint32_t height = 0;
-        std::size_t layerCount = 0;
-        std::vector<std::uint64_t> sourceOutputKeys;
-        std::vector<float> weightsRGBA;
-    };
-
     struct MaskEraseStroke {
         double x = 0.0;
         double y = 0.0;
@@ -167,11 +121,8 @@ private:
     std::map<std::string, std::unique_ptr<Node>> nodes_;
     std::map<std::string, std::vector<SourceRef>> inputs_;  // id -> src per port
     std::map<std::string, CacheEntry> cache_;
-    MaterialWeightsCacheEntry materialWeightsCache_;
-    std::uint64_t materialWeightsBuildCount_ = 0;
     std::map<std::string,
              std::map<std::string, std::vector<MaskEraseStroke>>> maskErases_;
-    std::optional<MaterialStack> materialStack_;
     std::string uiMetadataJSON_;
 
     std::string defaultSink_;

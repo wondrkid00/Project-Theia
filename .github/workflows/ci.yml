@@ -46,14 +46,7 @@ jobs:
         run: |
           mkdir -p .ci-artifacts
           .build/debug/theia-viewer --shot .ci-artifacts/foundation.png examples/foundation.json --size 128
-          .build/debug/theia-viewer --shot .ci-artifacts/material-stack.png examples/material-stack.json --size 128
-          .build/debug/theia-cli export-material examples/material-stack.json \
-            --size 64 --out-dir .ci-artifacts/material-bundle \
-            --basename material --heightmap r16 --mesh obj --mesh-stride 2
           test -s .ci-artifacts/foundation.png
-          test -s .ci-artifacts/material-stack.png
-          test -s .ci-artifacts/material-bundle/material_weights.png
-          test -s .ci-artifacts/material-bundle/material_material.json
 
       - name: Upload viewer smoke render
         uses: actions/upload-artifact@v4

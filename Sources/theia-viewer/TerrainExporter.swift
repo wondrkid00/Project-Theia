@@ -121,45 +121,4 @@ enum TerrainExporter {
         return "exported \(settings.basename) \(result.width)x\(result.height)"
     }
 
-    nonisolated static func performMaterial(text: String,
-                                            settings: ExportSettings) -> String {
-        guard let graph = theia.graph_create() else {
-            return "export failed: graph create"
-        }
-        defer { theia.graph_destroy(graph) }
-        guard theia.graph_load_json_text(graph, text) else {
-            let error = readCxxString { theia.graph_last_error(graph, $0, $1) }
-            return "export failed: \(error)"
-        }
-
-        func heightFormat() -> theia.HeightmapFormat {
-            guard settings.exportHeightmap else { return theia.HeightmapFormat.none }
-            switch settings.heightmapFormat {
-            case .png16: return theia.HeightmapFormat.png16
-            case .r16: return theia.HeightmapFormat.r16
-            case .pfm32: return theia.HeightmapFormat.pfm32
-            }
-        }
-
-        let result = settings.outDir.withCString { outDirPtr in
-            settings.basename.withCString { basenamePtr in
-                var options = theia.GraphMaterialExportOptions()
-                options.width = settings.size
-                options.height = settings.size
-                options.outDir = outDirPtr
-                options.basename = basenamePtr
-                options.heightmapFormat = heightFormat()
-                options.meshFormat = settings.exportMesh && settings.meshFormat == .obj
-                    ? theia.MeshFormat.obj : theia.MeshFormat.none
-                options.verticalScale = Float(settings.verticalScale)
-                options.meshStride = settings.meshStride
-                return theia.graph_export_material_bundle(graph, options)
-            }
-        }
-        guard result.ok else {
-            let error = readCxxString { theia.graph_last_error(graph, $0, $1) }
-            return "export failed: \(error)"
-        }
-        return "exported material bundle \(settings.basename) \(result.width)x\(result.height)"
-    }
 }

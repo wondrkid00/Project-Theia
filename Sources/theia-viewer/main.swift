@@ -137,15 +137,8 @@ let viewSize: UInt32 = args.size != 0 ? args.size : 512
 
 guard let device = MTLCreateSystemDefaultDevice() else { fail("no Metal device available") }
 guard let engine = TerrainEngine(graphPath: args.graphPath) else { fail("graph init failed") }
-// Material documents are evaluated by TerrainModel's coalesced preview worker.
-// Avoid running the terrain sink first on a second graph handle: that duplicate
-// cold evaluation competes with the viewport and is discarded as soon as the
-// packed material preview arrives.
-let defersInitialEvaluationToMaterialWorker = engine.hasMaterialStack
-let initialEval = defersInitialEvaluationToMaterialWorker
-    ? nil : engine.evaluate(size: viewSize)
-if initialEval == nil, args.graphPath != nil,
-   !defersInitialEvaluationToMaterialWorker {
+let initialEval = engine.evaluate(size: viewSize)
+if initialEval == nil, args.graphPath != nil {
     let error = engine.lastError()
     if !error.contains("no sink specified") {
         fail("evaluation failed: \(error)")
@@ -157,8 +150,6 @@ let initialW = initialEval.map { Int($0.result.width) } ?? flatDim
 let initialH = initialEval.map { Int($0.result.height) } ?? flatDim
 if let initialEval {
     print("terrain \(initialW)x\(initialH)  range [\(initialEval.result.minHeight), \(initialEval.result.maxHeight)]  nodes run \(initialEval.result.evaluated)")
-} else if defersInitialEvaluationToMaterialWorker {
-    print("terrain \(initialW)x\(initialH)  material preview deferred to worker")
 } else {
     print("terrain \(initialW)x\(initialH)  flat preview (empty graph)")
 }

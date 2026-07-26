@@ -4,7 +4,7 @@
 
 Theia is a native terrain studio for macOS. It turns procedural ideas into
 landscapes through a visual node graph—generate mountains, carve rivers, shape
-slopes, paint material regions, and export the result for your engine.
+slopes, inspect terrain data, and export the result for your engine.
 
 Built for Apple Silicon and powered by Metal, Theia keeps terrain creation fast,
 interactive, and entirely on your Mac.
@@ -21,11 +21,9 @@ Theia brings the essential terrain workflow into one focused tool:
 - **Shape with natural processes** — use hydraulic, thermal, droplet, and
   fluvial erosion to create landforms with believable structure.
 - **See every output** — preview terrain, masks, analysis data, normals, slopes,
-  and material blends in the 3D viewport.
-- **Author material regions** — layer masks and data into export-ready material
-  weights with predictable channel assignments.
+  and shaded surfaces in the 3D viewport.
 - **Export clean assets** — write 16-bit heightmaps, RAW terrain data, PFM
-  fields, OBJ meshes, and RGBA material weights.
+  fields, and OBJ meshes.
 
 ```text
 Build a graph  →  Shape the terrain  →  Preview the world  →  Export
@@ -42,12 +40,6 @@ swift build
 
 # Open the node editor with an example landscape
 swift run theia-viewer examples/showcase.json
-```
-
-Try a material-layer workflow:
-
-```sh
-swift run theia-viewer examples/material-stack.json
 ```
 
 Or generate terrain without opening the editor:
@@ -67,7 +59,6 @@ The [`examples`](examples) directory includes ready-made graphs for:
 - particle hydrology and river carving
 - fluvial landscape evolution
 - masks and typed analysis outputs
-- layered terrain materials
 
 They are the fastest way to learn how Theia's nodes work together.
 
@@ -110,10 +101,10 @@ Current release: **0.12.0-alpha.1**
 
 Theia already supports a complete procedural terrain loop: node authoring,
 GPU-backed generation, erosion and river systems, typed multi-output fields,
-mask editing, semantic material layers, 3D preview, and engine-ready export.
+mask editing, 3D preview, and engine-ready export.
 
-The next horizon is richer texture and PBR authoring, biome workflows, and new
-physically informed simulations.
+The next horizon is broader biome workflows and new physically informed
+simulations.
 
 ## License
 

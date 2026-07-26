@@ -17,19 +17,9 @@ struct GraphNodeInfo: Identifiable {
     var params: [GraphParameter]
 }
 
-private struct CachedMaterialPreview {
-    let signature: String
-    let geometry: [Float]
-    let weightsRGBA: [Float]
-    let width: Int
-    let height: Int
-    let evaluated: UInt32
-    let reused: UInt32
-}
-
 /// Camera motion is high-frequency UI state. Keeping its revision in a small
 /// observable prevents orbit/pan/zoom from invalidating the entire inspector
-/// tree (including every material layer row) on every pointer event.
+/// tree on every pointer event.
 final class ViewportCameraSignal: ObservableObject {
     @Published private(set) var revision: UInt64 = 0
 
@@ -73,9 +63,6 @@ final class TerrainModel: ObservableObject {
     @Published private(set) var exportStatus = ""
     @Published private(set) var isExporting = false
     @Published private(set) var diagnostics = GraphDiagnostics.empty
-    @Published private(set) var materialTerrainOptions: [GraphOutputReference] = []
-    @Published private(set) var materialSourceOptions: [GraphOutputReference] = []
-    @Published private(set) var materialStackIssue: String?
     @Published private(set) var recentNodeTypes: [String] = []
     @Published private(set) var previewReference = GraphOutputReference(node: "", output: "")
     let cameraSignal = ViewportCameraSignal()
@@ -98,14 +85,9 @@ final class TerrainModel: ObservableObject {
     private var currentPreviewData: [Float] = []
     private var currentScalarPreviewReference: GraphOutputReference?
     private var currentPreviewDataMatchesGeometry = false
-    private var currentPreviewWeights: [Float]?
     private var currentPreviewWidth = 0
     private var currentPreviewHeight = 0
-    private var cachedMaterialPreview: CachedMaterialPreview?
-    private var residentMaterialSignature: String?
     private var transientDisplayMode: ViewportDisplayMode?
-    private var materialColorGestureLayer: Int?
-    private var materialColorGestureTask: Task<Void, Never>?
     private var cleanDocumentFingerprint: String?
     private let previewWorker = TerrainPreviewWorker()
 
@@ -363,172 +345,6 @@ final class TerrainModel: ObservableObject {
         }
     }
 
-    func runMaterialExport() {
-        guard !isExporting else { return }
-        guard document.materialStack != nil else {
-            exportStatus = "create a material stack first"
-            return
-        }
-        if let issue = document.materialStackValidationMessage() {
-            exportStatus = "export failed: \(issue)"
-            return
-        }
-        guard exportSettings.size >= 2, exportSettings.meshStride > 0,
-              exportSettings.verticalScale > 0 else {
-            exportStatus = "export failed: invalid size or scale"
-            return
-        }
-        guard !exportSettings.exportMesh || exportSettings.meshFormat.isSupported else {
-            exportStatus = "export failed: FBX is not available yet"
-            return
-        }
-        let text: String
-        do { text = try document.encodedString() } catch {
-            exportStatus = "export failed: \(error.localizedDescription)"
-            return
-        }
-        let settings = exportSettings
-        isExporting = true
-        exportStatus = "exporting material bundle..."
-        DispatchQueue.global(qos: .userInitiated).async { [text, settings] in
-            let result = TerrainExporter.performMaterial(text: text, settings: settings)
-            Task { @MainActor [weak self] in
-                self?.isExporting = false
-                self?.exportStatus = result
-            }
-        }
-    }
-
-    func createMaterialStack() {
-        let candidates = materialTerrainOptions
-        let sinkReference = GraphOutputReference(node: document.sink,
-                                                 output: document.sinkOutput)
-        let upstreamReference = document.terrainReference(for: previewReference)
-        let selected = [previewReference, sinkReference, upstreamReference]
-            .compactMap { $0 }
-            .first(where: { candidates.contains($0) }) ?? candidates.first
-        guard let terrain = selected else {
-            exportStatus = "material stack needs a terrain output"
-            return
-        }
-        pushUndo()
-        document.createMaterialStack(terrain: terrain)
-        transientDisplayMode = nil
-        displayMode = .material
-        document.setPreviewSettings(GraphPreviewSettings(
-            displayMode: displayMode, materialPreset: materialPreset,
-            maskOpacity: maskOpacity))
-        syncPreviewWithDocument(markDirty: true)
-    }
-
-    func setMaterialTerrain(_ reference: GraphOutputReference) {
-        guard document.resolvedOutputKind(nodeId: reference.node,
-                                          output: reference.output) == .terrain,
-              document.isOutputEvaluable(reference),
-              document.materialStack?.terrain != reference else { return }
-        pushUndo()
-        document.setMaterialTerrain(reference)
-        syncPreviewWithDocument(markDirty: true)
-    }
-
-    func setMaterialLayerName(index: Int, name: String) {
-        guard let layers = document.materialStack?.layers,
-              layers.indices.contains(index) else { return }
-        let committed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !committed.isEmpty, layers[index].name != committed else { return }
-        pushUndo()
-        document.setMaterialLayerName(index: index, name: committed)
-        documentCanSave = true
-        markDirty()
-        materialStackIssue = document.materialStackValidationMessage()
-    }
-
-    func setMaterialLayerColor(index: Int, color: [Double]) {
-        guard let layers = document.materialStack?.layers,
-              layers.indices.contains(index),
-              color.count == 3,
-              color.allSatisfy({ $0.isFinite && $0 >= 0 && $0 <= 1 }),
-              layers[index].previewColorSRGB != color else { return }
-        if materialColorGestureLayer != index {
-            pushUndo()
-            materialColorGestureLayer = index
-        }
-        scheduleMaterialColorGestureEnd(for: index)
-        document.setMaterialLayerColor(index: index, color: color)
-        documentCanSave = true
-        markDirty()
-        if let layers = document.materialStack?.layers {
-            renderer.setMaterialColors(layers.map(\.previewColorSRGB))
-        }
-    }
-
-    func setMaterialLayerSource(index: Int, source: GraphOutputReference) {
-        guard let kind = document.resolvedOutputKind(nodeId: source.node,
-                                                     output: source.output),
-              kind == .mask || kind == .data,
-              document.isOutputEvaluable(source),
-              let layers = document.materialStack?.layers,
-              layers.indices.contains(index), index > 0,
-              layers[index].source != source else { return }
-        pushUndo()
-        document.setMaterialLayerSource(index: index, source: source)
-        syncPreviewWithDocument(markDirty: true)
-    }
-
-    func addMaterialLayer(source: GraphOutputReference) {
-        guard materialSourceOptions.contains(source),
-              let count = document.materialStack?.layers.count,
-              count < 4 else { return }
-        pushUndo()
-        guard document.addMaterialLayer(source: source) else { return }
-        syncPreviewWithDocument(markDirty: true)
-    }
-
-    func removeMaterialLayer(index: Int) {
-        guard let count = document.materialStack?.layers.count,
-              index > 0, index < count else { return }
-        pushUndo()
-        document.removeMaterialLayer(index: index)
-        syncPreviewWithDocument(markDirty: true)
-    }
-
-    func moveMaterialLayer(index: Int, offset: Int) {
-        guard let count = document.materialStack?.layers.count,
-              index > 0, index < count,
-              index + offset > 0, index + offset < count else { return }
-        pushUndo()
-        document.moveMaterialLayer(from: index, offset: offset)
-        syncPreviewWithDocument(markDirty: true)
-    }
-
-    func inspectMaterialLayerSource(index: Int) {
-        guard let layers = document.materialStack?.layers,
-              layers.indices.contains(index),
-              let source = layers[index].source else { return }
-        transientDisplayMode = .auto
-        if activeOutputReference == source {
-            setMaskBrushEnabled(false)
-            _ = refreshTerrain()
-        } else {
-            selectOutput(nodeId: source.node, output: source.output)
-        }
-    }
-
-    func removeMaterialStack() {
-        guard document.materialStack != nil else { return }
-        pushUndo()
-        document.materialStack = nil
-        cachedMaterialPreview = nil
-        transientDisplayMode = nil
-        if displayMode == .material {
-            displayMode = .auto
-            document.setPreviewSettings(GraphPreviewSettings(
-                displayMode: displayMode, materialPreset: materialPreset,
-                maskOpacity: maskOpacity))
-        }
-        syncPreviewWithDocument(markDirty: true)
-    }
-
     func reloadInspector() {
         nodes = document.nodes.map { node in
             let params = node.params.keys.sorted().map {
@@ -542,10 +358,6 @@ final class TerrainModel: ObservableObject {
 
     func refreshDiagnostics() {
         diagnostics = GraphDiagnostics.analyze(document)
-        materialTerrainOptions = document.materialTerrainCandidates()
-        materialSourceOptions = document.materialSourceCandidates()
-        materialStackIssue = document.materialStack == nil
-            ? nil : document.materialStackValidationMessage()
     }
 
     func apply(nodeId: String, param: String, value: Double) {
@@ -581,72 +393,6 @@ final class TerrainModel: ObservableObject {
     func refreshTerrain() -> Bool {
         let dataReference = activeOutputReference
         let mode = effectiveDisplayMode(for: dataReference)
-        if mode != .material {
-            currentScalarPreviewReference = nil
-        }
-        if mode == .material, let stack = document.materialStack {
-            if let issue = document.materialStackValidationMessage() {
-                setFlatPreview(status: "invalid material stack · \(issue)")
-                return true
-            }
-            let signature: String
-            do {
-                signature = try materialEvaluationSignature()
-            } catch {
-                lastStats = error.localizedDescription
-                return false
-            }
-            if restoreCachedMaterialPreview(signature: signature,
-                                            colors: stack.layers.map(\.previewColorSRGB)) {
-                return true
-            }
-            let text: String
-            do {
-                text = try document.encodedString()
-            } catch {
-                lastStats = error.localizedDescription
-                return false
-            }
-            lastStats = "evaluating material layers..."
-            previewWorker.submitMaterial(
-                jsonText: text,
-                colorsSRGB: stack.layers.map(\.previewColorSRGB),
-                size: size
-            ) { [weak self] outcome in
-                guard let self else { return }
-                switch outcome {
-                case .success(let preview):
-                    guard (try? self.materialEvaluationSignature()) == signature,
-                          let weights = preview.weightsRGBA else { return }
-                    self.currentPreviewGeometry = preview.geometry
-                    self.currentPreviewData = preview.data
-                    self.currentScalarPreviewReference = nil
-                    self.currentPreviewDataMatchesGeometry = preview.dataMatchesGeometry
-                    self.currentPreviewWeights = weights
-                    self.currentPreviewWidth = preview.width
-                    self.currentPreviewHeight = preview.height
-                    self.cachedMaterialPreview = CachedMaterialPreview(
-                        signature: signature,
-                        geometry: preview.geometry,
-                        weightsRGBA: weights,
-                        width: preview.width,
-                        height: preview.height,
-                        evaluated: preview.evaluated,
-                        reused: preview.reused)
-                    let colors = self.document.materialStack?.layers
-                        .map(\.previewColorSRGB) ?? preview.materialColorsSRGB ?? []
-                    self.renderer.setMaterialColors(colors)
-                    self.renderCachedPreview()
-                    self.residentMaterialSignature = signature
-                    self.applyViewportSettings(displayMode: .material)
-                    self.lastStats = "nodes \(preview.evaluated), reused \(preview.reused)"
-                case .failure(let message):
-                    self.lastStats = message
-                    self.setFlatPreview(status: "invalid material stack")
-                }
-            }
-            return true
-        }
         guard !dataReference.node.isEmpty else {
             setFlatPreview(status: document.nodes.isEmpty ? "empty graph" : "no output")
             return true
@@ -668,12 +414,10 @@ final class TerrainModel: ObservableObject {
             guard let self else { return }
             switch outcome {
             case .success(let preview):
-                self.residentMaterialSignature = nil
                 self.currentPreviewGeometry = preview.geometry
                 self.currentPreviewData = preview.data
                 self.currentScalarPreviewReference = dataReference
                 self.currentPreviewDataMatchesGeometry = preview.dataMatchesGeometry
-                self.currentPreviewWeights = nil
                 self.currentPreviewWidth = preview.width
                 self.currentPreviewHeight = preview.height
                 self.renderCachedPreview()
@@ -692,57 +436,6 @@ final class TerrainModel: ObservableObject {
         currentScalarPreviewReference = nil
         let dataReference = activeOutputReference
         let mode = effectiveDisplayMode(for: dataReference)
-        if mode == .material, let stack = document.materialStack {
-            if let issue = document.materialStackValidationMessage() {
-                setFlatPreview(status: "invalid material stack · \(issue)")
-                return true
-            }
-            guard let graph = theia.graph_create() else {
-                lastStats = "material preview graph creation failed"
-                return false
-            }
-            defer { theia.graph_destroy(graph) }
-            guard let text = try? document.encodedString(),
-                  theia.graph_load_json_text(graph, text) else {
-                lastStats = readCxxString { theia.graph_last_error(graph, $0, $1) }
-                return false
-            }
-            let dimension = Int(size)
-            var terrain = [Float](repeating: 0, count: dimension * dimension)
-            var weights = [Float](repeating: 0, count: dimension * dimension * 4)
-            let result = terrain.withUnsafeMutableBufferPointer { terrainBuffer in
-                weights.withUnsafeMutableBufferPointer { weightBuffer in
-                    theia.graph_evaluate_material_stack(
-                        graph, size, size,
-                        terrainBuffer.baseAddress, terrainBuffer.count,
-                        weightBuffer.baseAddress, weightBuffer.count)
-                }
-            }
-            guard result.ok else {
-                lastStats = readCxxString { theia.graph_last_error(graph, $0, $1) }
-                return false
-            }
-            currentPreviewGeometry = terrain
-            currentPreviewData = terrain
-            currentScalarPreviewReference = nil
-            currentPreviewDataMatchesGeometry = true
-            currentPreviewWeights = weights
-            currentPreviewWidth = Int(result.width)
-            currentPreviewHeight = Int(result.height)
-            renderer.setMaterialColors(stack.layers.map(\.previewColorSRGB))
-            if let signature = try? materialEvaluationSignature() {
-                cachedMaterialPreview = CachedMaterialPreview(
-                    signature: signature, geometry: terrain,
-                    weightsRGBA: weights, width: Int(result.width),
-                    height: Int(result.height), evaluated: result.evaluated,
-                    reused: result.reused)
-            }
-            renderCachedPreview()
-            residentMaterialSignature = cachedMaterialPreview?.signature
-            applyViewportSettings(displayMode: .material)
-            lastStats = "nodes \(result.evaluated), reused \(result.reused)"
-            return true
-        }
         guard !dataReference.node.isEmpty else {
             setFlatPreview(status: document.nodes.isEmpty ? "empty graph" : "no output")
             return true
@@ -772,9 +465,7 @@ final class TerrainModel: ObservableObject {
         currentPreviewGeometry = geometry.heights
         currentPreviewData = data.heights
         currentScalarPreviewReference = dataReference
-        residentMaterialSignature = nil
         currentPreviewDataMatchesGeometry = geometryReference == dataReference
-        currentPreviewWeights = nil
         currentPreviewWidth = w
         currentPreviewHeight = h
         renderCachedPreview()
@@ -790,17 +481,15 @@ final class TerrainModel: ObservableObject {
 
     func setFlatPreview(status: String = "flat preview") {
         previewWorker.cancelPending()
-        residentMaterialSignature = nil
         let dim = max(2, Int(size == 0 ? document.resolution.width : size))
         let flat = [Float](repeating: 0, count: dim * dim)
         currentPreviewGeometry = flat
         currentPreviewData = flat
         currentScalarPreviewReference = nil
         currentPreviewDataMatchesGeometry = true
-        currentPreviewWeights = nil
         currentPreviewWidth = dim
         currentPreviewHeight = dim
-        renderer.setPreview(heights: flat, data: flat, weightsRGBA: nil,
+        renderer.setPreview(heights: flat, data: flat,
                             width: dim, height: dim, dataMatchesHeights: true)
         applyViewportSettings(displayMode: .terrain)
         lastStats = status
@@ -1310,27 +999,23 @@ final class TerrainModel: ObservableObject {
     }
 
     func undo() {
-        endMaterialColorGesture()
         guard let previous = history.undo(current: document) else { return }
         restore(previous, status: "undo")
     }
 
     func redo() {
-        endMaterialColorGesture()
         guard let next = history.redo(current: document) else { return }
         restore(next, status: "redo")
     }
 
     private func pushUndo() {
         guard !isRestoringHistory else { return }
-        endMaterialColorGesture()
         history.record(document)
     }
 
     private func restore(_ snapshot: GraphDocument, status: String) {
         isRestoringHistory = true
         defer { isRestoringHistory = false }
-        endMaterialColorGesture()
         let previousPreview = previewReference
         let previousSelectedNodeId = selectedNodeId
         let previousSelectedNodeIds = selectedNodeIds
@@ -1493,56 +1178,8 @@ final class TerrainModel: ObservableObject {
               !currentPreviewGeometry.isEmpty,
               !currentPreviewData.isEmpty else { return }
         renderer.setPreview(heights: currentPreviewGeometry, data: currentPreviewData,
-                            weightsRGBA: currentPreviewWeights,
                             width: currentPreviewWidth, height: currentPreviewHeight,
                             dataMatchesHeights: currentPreviewDataMatchesGeometry)
-    }
-
-    private func restoreCachedMaterialPreview(signature: String,
-                                              colors: [[Double]]) -> Bool {
-        guard let cached = cachedMaterialPreview,
-              cached.signature == signature else { return false }
-        previewWorker.cancelPending()
-        renderer.setMaterialColors(colors)
-        if residentMaterialSignature == signature {
-            applyViewportSettings(displayMode: .material)
-            lastStats = "material resident · nodes \(cached.evaluated), reused \(cached.reused)"
-            return true
-        }
-        currentPreviewGeometry = cached.geometry
-        currentPreviewData = cached.geometry
-        currentScalarPreviewReference = nil
-        currentPreviewDataMatchesGeometry = true
-        currentPreviewWeights = cached.weightsRGBA
-        currentPreviewWidth = cached.width
-        currentPreviewHeight = cached.height
-        renderCachedPreview()
-        residentMaterialSignature = signature
-        applyViewportSettings(displayMode: .material)
-        lastStats = "material cached · nodes \(cached.evaluated), reused \(cached.reused)"
-        return true
-    }
-
-    /// Stable snapshot of only state that can affect terrain or material weights.
-    /// Names, preview colors, sink selection, layout, and display settings are
-    /// deliberately normalized so authoring-only edits never schedule graph work.
-    private func materialEvaluationSignature() throws -> String {
-        var snapshot = document
-        snapshot.sink = ""
-        snapshot.sinkOutput = ""
-        if var stack = snapshot.materialStack {
-            for index in stack.layers.indices {
-                stack.layers[index].name = "Layer \(index + 1)"
-                stack.layers[index].previewColorSRGB = [0, 0, 0]
-            }
-            snapshot.materialStack = stack
-        }
-        if var ui = snapshot.ui {
-            ui.positions = [:]
-            ui.preview = GraphPreviewSettings()
-            snapshot.ui = ui
-        }
-        return "preview-size=\(size)\n" + (try snapshot.encodedString())
     }
 
     func previewWorkerActivity() -> TerrainPreviewWorkerActivity {
@@ -1551,26 +1188,6 @@ final class TerrainModel: ObservableObject {
 
     private func inputNodeId(to nodeId: String, input: UInt32) -> String? {
         document.connections.last { $0.to == nodeId && $0.input == input }?.from
-    }
-
-    private func scheduleMaterialColorGestureEnd(for layer: Int) {
-        materialColorGestureTask?.cancel()
-        materialColorGestureTask = Task { [weak self] in
-            do {
-                try await Task.sleep(nanoseconds: 450_000_000)
-            } catch {
-                return
-            }
-            guard let self, self.materialColorGestureLayer == layer else { return }
-            self.materialColorGestureLayer = nil
-            self.materialColorGestureTask = nil
-        }
-    }
-
-    private func endMaterialColorGesture() {
-        materialColorGestureTask?.cancel()
-        materialColorGestureTask = nil
-        materialColorGestureLayer = nil
     }
 
     private func markDirty(forceReconcile: Bool = false) {

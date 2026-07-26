@@ -55,7 +55,7 @@ Theia already follows several Metal practices from the book:
 - The core API remains synchronous for deterministic CLI/export behavior. The viewer now evaluates live-edit snapshots on a serial background worker and drops stale results before they reach the renderer.
 - The core uses shared buffers for easy CPU readback. That is convenient for CLI/export/tests. If viewport-only GPU workflows grow, private storage plus explicit blits may be faster.
 - Runtime MSL compilation is convenient for SwiftPM-only development. For production builds, consider optional precompiled libraries or a pipeline warmup step if launch latency becomes noticeable.
-- Texture-backed heightfields could help material preview and GPU export maps, but buffer-backed heightfields remain better aligned with current node kernels.
+- Texture-backed heightfields could help surface preview and GPU export maps, but buffer-backed heightfields remain better aligned with current node kernels.
 
 ## SimpleHydrology: Algorithm Notes
 
@@ -209,7 +209,7 @@ Potential node family:
   - output: mask
   - trace a connected macro river network across the actual terrain, using conditioned routing and seed-driven meanders so small depressions do not break plausible paths
   - params stay mask-only: seed, water, width, headwaters
-  - useful for material preview and export
+  - useful for preview and export
 - `rivercarve`
   - input: terrain + river mask
   - output: terrain
@@ -272,5 +272,5 @@ Use SimpleHydrology as an implementation reference, then compare against at leas
 - Discharge output is non-degenerate and highlights coherent stream channels.
 - Momentum-enabled mode produces more stable long-distance channels than discharge-only mode.
 - Chaining thermal/cascade after droplet erosion reduces jagged channel walls.
-- Exported mask output can be used as river/wetness mask in Phase 5 material preview.
+- Exported mask output can be used as a river or wetness mask in downstream tools.
 - Old graphs without new nodes remain loadable.

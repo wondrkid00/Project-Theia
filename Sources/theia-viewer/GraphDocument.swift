@@ -58,87 +58,6 @@ struct GraphOutputReference: Codable, Hashable, Sendable {
     var output: String
 }
 
-struct GraphMaterialLayer: Codable, Identifiable, Equatable, Sendable {
-    var id: String
-    var name: String
-    var previewColorSRGB: [Double]
-    var source: GraphOutputReference?
-
-    enum CodingKeys: String, CodingKey {
-        case id, name, previewColorSRGB, source
-    }
-
-    init(id: String, name: String, previewColorSRGB: [Double],
-         source: GraphOutputReference? = nil) {
-        self.id = id
-        self.name = name
-        self.previewColorSRGB = previewColorSRGB
-        self.source = source
-    }
-
-    init(from decoder: Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        id = try c.decode(String.self, forKey: .id)
-        name = try c.decode(String.self, forKey: .name)
-        previewColorSRGB = try c.decode([Double].self, forKey: .previewColorSRGB)
-        if c.contains(.source), try c.decodeNil(forKey: .source) {
-            throw DecodingError.dataCorruptedError(forKey: .source, in: c,
-                debugDescription: "material source must be an object when present")
-        }
-        source = try c.decodeIfPresent(GraphOutputReference.self, forKey: .source)
-        guard !id.isEmpty, !name.isEmpty else {
-            throw DecodingError.dataCorruptedError(forKey: .id, in: c,
-                debugDescription: "material layer id/name must not be empty")
-        }
-        guard previewColorSRGB.count == 3,
-              previewColorSRGB.allSatisfy({ $0.isFinite && $0 >= 0 && $0 <= 1 }) else {
-            throw DecodingError.dataCorruptedError(forKey: .previewColorSRGB, in: c,
-                debugDescription: "previewColorSRGB must contain three finite values in [0,1]")
-        }
-        if let source, source.node.isEmpty || source.output.isEmpty {
-            throw DecodingError.dataCorruptedError(forKey: .source, in: c,
-                debugDescription: "material source node/output must not be empty")
-        }
-    }
-}
-
-struct GraphMaterialStack: Codable, Equatable, Sendable {
-    var terrain: GraphOutputReference
-    var layers: [GraphMaterialLayer]
-
-    enum CodingKeys: String, CodingKey { case terrain, layers }
-
-    init(terrain: GraphOutputReference, layers: [GraphMaterialLayer]) {
-        self.terrain = terrain
-        self.layers = layers
-    }
-
-    init(from decoder: Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        terrain = try c.decode(GraphOutputReference.self, forKey: .terrain)
-        layers = try c.decode([GraphMaterialLayer].self, forKey: .layers)
-        guard !terrain.node.isEmpty, !terrain.output.isEmpty else {
-            throw DecodingError.dataCorruptedError(forKey: .terrain, in: c,
-                debugDescription: "material terrain reference must not be empty")
-        }
-        guard (1...4).contains(layers.count) else {
-            throw DecodingError.dataCorruptedError(forKey: .layers, in: c,
-                debugDescription: "material stack requires one to four layers")
-        }
-        guard layers[0].source == nil else {
-            throw DecodingError.dataCorruptedError(forKey: .layers, in: c,
-                debugDescription: "material base layer must not have a source")
-        }
-        // A missing overlay source is a repairable semantic state. Viewer node
-        // deletion clears the reference without deleting/reordering the layer,
-        // while material validation still blocks preview and export.
-        guard Set(layers.map(\.id)).count == layers.count else {
-            throw DecodingError.dataCorruptedError(forKey: .layers, in: c,
-                debugDescription: "material layer ids must be unique")
-        }
-    }
-}
-
 struct GraphNodePosition: Codable, Equatable {
     var x: Double
     var y: Double
@@ -305,21 +224,18 @@ struct GraphDocument: Codable {
     var sinkOutput: String
     var nodes: [GraphDocumentNode]
     var connections: [GraphDocumentConnection]
-    var materialStack: GraphMaterialStack?
     var ui: GraphDocumentUI?
 
     enum CodingKeys: String, CodingKey {
-        case formatVersion, resolution, sink, sinkOutput, nodes, connections,
-             materialStack, ui
+        case formatVersion, resolution, sink, sinkOutput, nodes, connections, ui
     }
 
-    init(formatVersion: Int = 3,
+    init(formatVersion: Int = 2,
          resolution: GraphResolution,
          sink: String,
          sinkOutput: String = "",
          nodes: [GraphDocumentNode],
          connections: [GraphDocumentConnection],
-         materialStack: GraphMaterialStack? = nil,
          ui: GraphDocumentUI?) {
         self.formatVersion = formatVersion
         self.resolution = resolution
@@ -327,7 +243,6 @@ struct GraphDocument: Codable {
         self.sinkOutput = sinkOutput
         self.nodes = nodes
         self.connections = connections
-        self.materialStack = materialStack
         self.ui = ui
     }
 
@@ -340,22 +255,18 @@ struct GraphDocument: Codable {
         sinkOutput = try c.decodeIfPresent(String.self, forKey: .sinkOutput) ?? ""
         nodes = try c.decodeIfPresent([GraphDocumentNode].self, forKey: .nodes) ?? []
         connections = try c.decodeIfPresent([GraphDocumentConnection].self, forKey: .connections) ?? []
-        materialStack = try c.decodeIfPresent(GraphMaterialStack.self,
-                                               forKey: .materialStack)
+        // Accept v3 as a legacy input format. Codable ignores extension fields
+        // that are no longer supported, and encoding normalizes the file to v2.
         guard (1...3).contains(formatVersion) else {
             throw DecodingError.dataCorruptedError(forKey: .formatVersion, in: c,
                 debugDescription: "unsupported graph formatVersion \(formatVersion)")
-        }
-        if materialStack != nil && formatVersion < 3 {
-            throw DecodingError.dataCorruptedError(forKey: .materialStack, in: c,
-                debugDescription: "materialStack requires formatVersion 3")
         }
         ui = try c.decodeIfPresent(GraphDocumentUI.self, forKey: .ui)
     }
 
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
-        try c.encode(3, forKey: .formatVersion)
+        try c.encode(2, forKey: .formatVersion)
         try c.encode(resolution, forKey: .resolution)
         if !sink.isEmpty {
             try c.encode(sink, forKey: .sink)
@@ -363,7 +274,6 @@ struct GraphDocument: Codable {
         }
         try c.encode(nodes, forKey: .nodes)
         try c.encode(connections, forKey: .connections)
-        try c.encodeIfPresent(materialStack, forKey: .materialStack)
         if let ui {
             try c.encode(ui, forKey: .ui)
         }
@@ -384,7 +294,7 @@ struct GraphDocument: Codable {
     }
 
     static func emptyDocument(width: UInt32 = 512, height: UInt32 = 512) -> GraphDocument {
-        GraphDocument(formatVersion: 3,
+        GraphDocument(formatVersion: 2,
                       resolution: GraphResolution(width: width, height: height),
                       sink: "",
                       sinkOutput: "",
@@ -394,7 +304,7 @@ struct GraphDocument: Codable {
     }
 
     mutating func ensureLayout() {
-        formatVersion = 3
+        formatVersion = 2
         ensureNodeDefaults()
         migrateNamedOutputs()
         repairRiverCarveConnections()
@@ -545,13 +455,6 @@ struct GraphDocument: Codable {
         connections.removeAll { $0.from == id || $0.to == id }
         ui?.positions.removeValue(forKey: id)
         ui?.maskErases.removeValue(forKey: id)
-        if var stack = materialStack {
-            for index in stack.layers.indices where
-                stack.layers[index].source?.node == id {
-                stack.layers[index].source = nil
-            }
-            materialStack = stack
-        }
         if sink == id {
             sink = nodes.last?.id ?? ""
             sinkOutput = node(id: sink).map { Self.defaultOutputName(for: $0.type) } ?? ""
@@ -564,13 +467,6 @@ struct GraphDocument: Codable {
         for id in ids {
             ui?.positions.removeValue(forKey: id)
             ui?.maskErases.removeValue(forKey: id)
-        }
-        if var stack = materialStack {
-            for index in stack.layers.indices where
-                stack.layers[index].source.map({ ids.contains($0.node) }) == true {
-                stack.layers[index].source = nil
-            }
-            materialStack = stack
         }
         if ids.contains(sink) {
             sink = nodes.last?.id ?? ""
@@ -740,59 +636,6 @@ struct GraphDocument: Codable {
         return nil
     }
 
-    func materialTerrainCandidates() -> [GraphOutputReference] {
-        nodes.flatMap { graphNode in
-            Self.outputPorts(for: graphNode.type).compactMap { port in
-                let reference = GraphOutputReference(node: graphNode.id,
-                                                     output: port.name)
-                return resolvedOutputKind(nodeId: graphNode.id,
-                                          output: port.name) == .terrain &&
-                    isOutputEvaluable(reference) ? reference : nil
-            }
-        }
-    }
-
-    func materialSourceCandidates() -> [GraphOutputReference] {
-        nodes.flatMap { graphNode in
-            Self.outputPorts(for: graphNode.type).compactMap { port in
-                let reference = GraphOutputReference(node: graphNode.id,
-                                                     output: port.name)
-                guard let kind = resolvedOutputKind(nodeId: graphNode.id,
-                                                    output: port.name),
-                      kind == .mask || kind == .data,
-                      isOutputEvaluable(reference) else { return nil }
-                return reference
-            }
-        }
-    }
-
-    /// Material sources not already assigned to another overlay. When editing an
-    /// existing layer, pass its index so its current source remains available.
-    func unusedMaterialSourceCandidates(excludingLayerAt excludedIndex: Int? = nil)
-        -> [GraphOutputReference] {
-        let assigned: [GraphOutputReference] = materialStack?.layers.enumerated()
-            .compactMap { index, layer in
-            guard index > 0, index != excludedIndex else { return nil }
-            return layer.source
-        } ?? []
-        let used = Set<GraphOutputReference>(assigned)
-        return materialSourceCandidates().filter { !used.contains($0) }
-    }
-
-    /// Stable candidate order with unused outputs first. Used sources remain in
-    /// the result because duplicate references are legal when explicitly chosen.
-    func materialSourceCandidatesPrioritizingUnused(
-        excludingLayerAt excludedIndex: Int? = nil
-    ) -> [GraphOutputReference] {
-        let all = materialSourceCandidates()
-        let unused = Set(unusedMaterialSourceCandidates(
-            excludingLayerAt: excludedIndex))
-        return all.filter { unused.contains($0) } + all.filter { !unused.contains($0) }
-    }
-
-    /// Conservative authoring-time evaluability check. Node evaluation is atomic,
-    /// so every required input dependency must be complete even when only one
-    /// named output is being considered as a material source.
     func isOutputEvaluable(_ reference: GraphOutputReference) -> Bool {
         outputDependenciesAreComplete(reference, visiting: [])
     }
@@ -830,93 +673,6 @@ struct GraphDocument: Codable {
             return false
         }
         return true
-    }
-
-    func materialStackValidationMessage() -> String? {
-        guard let stack = materialStack else { return "No material stack configured" }
-        guard resolvedOutputKind(nodeId: stack.terrain.node,
-                                 output: stack.terrain.output) == .terrain,
-              isOutputEvaluable(stack.terrain) else {
-            return "Choose a valid terrain output"
-        }
-        guard (1...4).contains(stack.layers.count), stack.layers[0].source == nil else {
-            return "Material stack structure is invalid"
-        }
-        for layer in stack.layers.dropFirst() {
-            guard let source = layer.source,
-                  let kind = resolvedOutputKind(nodeId: source.node,
-                                                output: source.output),
-                  (kind == .mask || kind == .data),
-                  isOutputEvaluable(source) else {
-                return "Layer \(layer.name) needs a mask or data source"
-            }
-        }
-        return nil
-    }
-
-    mutating func createMaterialStack(terrain: GraphOutputReference) {
-        materialStack = GraphMaterialStack(
-            terrain: terrain,
-            layers: [GraphMaterialLayer(id: "base", name: "Ground",
-                                        previewColorSRGB: [0.42, 0.35, 0.26])])
-    }
-
-    mutating func setMaterialTerrain(_ reference: GraphOutputReference) {
-        materialStack?.terrain = reference
-    }
-
-    mutating func setMaterialLayerName(index: Int, name: String) {
-        guard materialStack?.layers.indices.contains(index) == true else { return }
-        materialStack?.layers[index].name = name.isEmpty ? "Layer \(index + 1)" : name
-    }
-
-    mutating func setMaterialLayerColor(index: Int, color: [Double]) {
-        guard materialStack?.layers.indices.contains(index) == true,
-              color.count == 3,
-              color.allSatisfy({ $0.isFinite && $0 >= 0 && $0 <= 1 }) else { return }
-        materialStack?.layers[index].previewColorSRGB = color
-    }
-
-    mutating func setMaterialLayerSource(index: Int,
-                                         source: GraphOutputReference) {
-        guard index > 0, materialStack?.layers.indices.contains(index) == true else { return }
-        materialStack?.layers[index].source = source
-    }
-
-    @discardableResult
-    mutating func addMaterialLayer(source: GraphOutputReference) -> Bool {
-        guard var stack = materialStack, stack.layers.count < 4 else { return false }
-        let base = "layer"
-        var suffix = stack.layers.count
-        var id = "\(base)\(suffix)"
-        let existing = Set(stack.layers.map(\.id))
-        while existing.contains(id) {
-            suffix += 1
-            id = "\(base)\(suffix)"
-        }
-        let palette: [[Double]] = [
-            [0.46, 0.45, 0.42], [0.18, 0.42, 0.62], [0.86, 0.88, 0.90]
-        ]
-        let overlayIndex = stack.layers.count - 1
-        stack.layers.append(GraphMaterialLayer(
-            id: id, name: "Layer \(stack.layers.count + 1)",
-            previewColorSRGB: palette[min(overlayIndex, palette.count - 1)],
-            source: source))
-        materialStack = stack
-        return true
-    }
-
-    mutating func removeMaterialLayer(index: Int) {
-        guard index > 0, materialStack?.layers.indices.contains(index) == true else { return }
-        materialStack?.layers.remove(at: index)
-    }
-
-    mutating func moveMaterialLayer(from index: Int, offset: Int) {
-        guard index > 0, let count = materialStack?.layers.count else { return }
-        let destination = index + offset
-        guard destination > 0, destination < count else { return }
-        guard let layer = materialStack?.layers.remove(at: index) else { return }
-        materialStack?.layers.insert(layer, at: destination)
     }
 
     mutating func setSink(nodeId: String, output: String = "") {

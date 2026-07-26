@@ -15,11 +15,6 @@ struct Uniforms {
     float4 terrainParams;  // x=base height offset for geometry
     float4 brushParams;    // xy=center UV, z=radius UV, w=visible
     uint4  gridParams;     // x=gridW, y=gridH
-    float4 materialColor0; // linear-light preview colors (decoded once on CPU)
-    float4 materialColor1;
-    float4 materialColor2;
-    float4 materialColor3;
-    float4 materialParams; // x=packed weights available, yz=weight grid size
 };
 
 struct VOut {
@@ -134,13 +129,6 @@ float3 materialRamp(float h, float slope, float mask, uint preset) {
     return mix(col, float3(0.24, 0.24, 0.23), mask * 0.55);
 }
 
-float3 linearToSrgb(float3 value) {
-    value = max(value, 0.0);
-    return select(value * 12.92,
-                  1.055 * pow(value, float3(1.0 / 2.4)) - 0.055,
-                  value > 0.0031308);
-}
-
 float4 applyBrushDecal(float4 base, float2 uv, constant Uniforms& U) {
     if (U.brushParams.w < 0.5) {
         return base;
@@ -158,8 +146,7 @@ float4 applyBrushDecal(float4 base, float2 uv, constant Uniforms& U) {
 }
 
 fragment float4 terrain_fragment(VOut in [[stage_in]],
-                                 constant Uniforms& U [[buffer(1)]],
-                                 const device float4* materialWeights [[buffer(3)]]) {
+                                 constant Uniforms& U [[buffer(1)]]) {
     float3 N = normalize(in.normal);
     float3 L = normalize(U.lightDirection.xyz);
     float diff = max(0.0, dot(N, L));
@@ -204,28 +191,6 @@ fragment float4 terrain_fragment(VOut in [[stage_in]],
     }
 
     if (mode == 5) {
-        if (U.materialParams.x > 0.5) {
-            // Sample the packed weights per fragment rather than interpolating
-            // a per-vertex value. Gouraud interpolation smeared every material
-            // boundary across a mesh cell, so the preview disagreed with the
-            // exported weights PNG; nearest sampling shows the exported texel.
-            uint gw = max(uint(U.materialParams.y + 0.5), 1u);
-            uint gh = max(uint(U.materialParams.z + 0.5), 1u);
-            uint sx = min(uint(clamp(in.uv.x, 0.0, 1.0) * float(gw - 1) + 0.5),
-                          gw - 1);
-            uint sy = min(uint(clamp(in.uv.y, 0.0, 1.0) * float(gh - 1) + 0.5),
-                          gh - 1);
-            float4 weights = max(materialWeights[sy * gw + sx], 0.0);
-            float sum = max(dot(weights, float4(1.0)), 0.000001);
-            weights /= sum;
-            float3 linearColor =
-                U.materialColor0.rgb * weights.r +
-                U.materialColor1.rgb * weights.g +
-                U.materialColor2.rgb * weights.b +
-                U.materialColor3.rgb * weights.a;
-            float3 col = clamp(linearToSrgb(linearColor * lit), 0.0, 1.0);
-            return applyBrushDecal(float4(col, 1.0), in.uv, U);
-        }
         float3 col = materialRamp(h, slope, mask, preset);
         return applyBrushDecal(float4(col * lit, 1.0), in.uv, U);
     }

@@ -107,8 +107,8 @@ func runViewerSelfTests() -> Int32 {
         var decoded = try JSONDecoder().decode(GraphDocument.self,
                                                from: Data(encoded.utf8))
         decoded.ensureLayout()
-        expect(decoded.formatVersion == 3 && decoded.sinkOutput == "ridge",
-               "v3 round-trip should preserve selected output")
+        expect(decoded.formatVersion == 2 && decoded.sinkOutput == "ridge",
+               "v2 round-trip should preserve selected output")
         expect(decoded.connections.first?.output == "height",
                "v2 round-trip should preserve edge source port")
     } catch {
@@ -132,7 +132,7 @@ func runViewerSelfTests() -> Int32 {
         }
         """.utf8))
         migrated.ensureLayout()
-        expect(migrated.formatVersion == 3 && migrated.sinkOutput == "mask",
+        expect(migrated.formatVersion == 2 && migrated.sinkOutput == "mask",
                "v1 sink should migrate to its default named output")
         expect(migrated.connections.first?.output == "height",
                "v1 edge should migrate to source default output")
@@ -141,174 +141,34 @@ func runViewerSelfTests() -> Int32 {
     } catch {
         expect(false, "v1 multi-output migration failed: \(error)")
     }
-    print("✓ graph v1 to v3 named-output migration")
+    print("✓ graph v1 to v2 named-output migration")
 
     do {
-        var material = try GraphDocument.load(path: "examples/material-stack.json")
-        expect(material.formatVersion == 3, "material example should load as graph v3")
-        expect(material.materialStack?.layers.map(\.id) ==
-               ["ground", "rock", "water", "ridge"],
-               "material channel order should survive load")
-        expect(material.materialStackValidationMessage() == nil,
-               "material example should be semantically valid")
-        expect(material.materialSourceCandidates().contains(
-            GraphOutputReference(node: "gullies", output: "ridge")),
-            "data outputs should appear in material source candidates")
-        expect(material.materialSourceCandidates().contains(
-            GraphOutputReference(node: "river", output: "mask")),
-            "mask outputs should appear in material source candidates")
-        expect(!material.materialSourceCandidates().contains(
-            GraphOutputReference(node: "gullies", output: "height")),
-            "terrain outputs must be filtered from material sources")
-
-        var materialWithAvailableSource = material
-        materialWithAvailableSource.removeMaterialLayer(index: 3)
-        let stackBeforeCandidateLookup = materialWithAvailableSource.materialStack
-        let unusedSources = materialWithAvailableSource.unusedMaterialSourceCandidates()
-        expect(unusedSources == [
-            GraphOutputReference(node: "gullies", output: "ridge"),
-            GraphOutputReference(node: "ridgecoverage", output: "field")
-        ], "unused material candidates should exclude sources already assigned")
-        expect(materialWithAvailableSource
-            .materialSourceCandidatesPrioritizingUnused().first == unusedSources.first,
-            "unused material candidates should be offered before explicit duplicates")
-        expect(materialWithAvailableSource.materialStack == stackBeforeCandidateLookup,
-               "candidate lookup must not mutate the material stack")
-        expect(material.unusedMaterialSourceCandidates(excludingLayerAt: 1).contains(
-            GraphOutputReference(node: "steep", output: "mask")),
-            "editing a layer should keep its current source available")
-
-        var materialHistory = GraphDocumentHistory(limit: 4)
-        materialHistory.record(material)
-        material.setMaterialLayerColor(index: 0, color: [0.1, 0.2, 0.3])
-        material.moveMaterialLayer(from: 3, offset: -1)
-        expect(material.materialStack?.layers.map(\.id) ==
-               ["ground", "rock", "ridge", "water"],
-               "overlay reorder should change RGBA channel order")
-        if let restored = materialHistory.undo(current: material) {
-            expect(restored.materialStack?.layers.first?.previewColorSRGB ==
-                   [0.22, 0.39, 0.18],
-                   "material color change should participate in undo")
-            expect(restored.materialStack?.layers.map(\.id) ==
-                   ["ground", "rock", "water", "ridge"],
-                   "material reorder should participate in undo")
-        } else {
-            expect(false, "material history snapshot missing")
+        var migrated = try JSONDecoder().decode(GraphDocument.self, from: Data("""
+        {
+          "formatVersion": 3,
+          "resolution": { "width": 32, "height": 32 },
+          "sink": "base",
+          "sinkOutput": "height",
+          "nodes": [
+            { "id": "base", "type": "perlin", "params": {} }
+          ],
+          "connections": [],
+          "retiredExtension": { "enabled": true }
         }
-
-        let encoded = try material.encodedString()
-        let decoded = try JSONDecoder().decode(GraphDocument.self,
-                                                from: Data(encoded.utf8))
-        expect(decoded.materialStack == material.materialStack,
-               "material stack should round-trip colors, sources and order")
-
-        if let encodedData = encoded.data(using: .utf8),
-           var root = try JSONSerialization.jsonObject(with: encodedData) as? [String: Any],
-           var stack = root["materialStack"] as? [String: Any],
-           var layers = stack["layers"] as? [[String: Any]] {
-            let originalLayers = layers
-            layers[1]["source"] = ["node": "", "output": "mask"]
-            stack["layers"] = layers
-            root["materialStack"] = stack
-            let emptyReference = try JSONSerialization.data(withJSONObject: root)
-            expect((try? JSONDecoder().decode(GraphDocument.self,
-                                               from: emptyReference)) == nil,
-                   "Swift loader must reject empty material source references")
-
-            layers = originalLayers
-            if !layers.isEmpty {
-                layers[0]["source"] = NSNull()
-                stack["layers"] = layers
-                root["materialStack"] = stack
-                let nullBase = try JSONSerialization.data(withJSONObject: root)
-                expect((try? JSONDecoder().decode(GraphDocument.self,
-                                                   from: nullBase)) == nil,
-                       "Swift loader must reject an explicit null base source")
-            }
-        } else {
-            expect(false, "could not construct strict Swift material loader tests")
-        }
-
-        let channelOrderBeforeDeletion = material.materialStack?.layers.map(\.id)
-        material.deleteNode(id: "river")
-        expect(material.materialStack?.layers.map(\.id) == channelOrderBeforeDeletion,
-               "deleting a source node must preserve layer identity and RGBA order")
-        expect(material.materialStack?.layers.first(where: {
-            $0.id == "water"
-        })?.source == nil,
-               "deleting a source node should clear only the affected layer source")
-        expect(material.materialStackValidationMessage() != nil,
-               "cleared material source should invalidate preview/export")
-        expect(GraphDiagnostics.analyze(material).issues.contains(where: {
-            $0.code == "missing_material_source"
-        }), "cleared material source should be reported by core diagnostics")
-        let repairableText = try material.encodedString()
-        let repairableDecoded = try JSONDecoder().decode(
-            GraphDocument.self, from: Data(repairableText.utf8))
-        expect(repairableDecoded.materialStack?.layers.first(where: {
-            $0.id == "water"
-        })?.source == nil,
-               "cleared layer source should round-trip through the Swift loader")
-        if let graph = theia.graph_create() {
-            expect(theia.graph_load_json_text(graph, repairableText),
-                   "graph with an empty layer source must remain loadable for repair")
-            theia.graph_destroy(graph)
-        } else {
-            expect(false, "graph creation failed for dangling material source test")
-        }
-
-        material.deleteNode(id: "gullies")
-        expect(material.materialStack?.terrain.node == "gullies" &&
-               material.materialStack?.layers.map(\.id) == channelOrderBeforeDeletion &&
-               material.materialStackValidationMessage() != nil,
-               "deleted terrain reference and layer channels should remain visible as invalid")
-
-        var bulkDeletion = try GraphDocument.load(path: "examples/material-stack.json")
-        let idsBeforeBulkDeletion = bulkDeletion.materialStack?.layers.map(\.id)
-        bulkDeletion.deleteNodes(ids: ["river", "steep"])
-        expect(bulkDeletion.materialStack?.layers.map(\.id) == idsBeforeBulkDeletion &&
-               bulkDeletion.materialStack?.layers.first(where: {
-                   $0.id == "rock"
-               })?.source == nil &&
-               bulkDeletion.materialStack?.layers.first(where: {
-                   $0.id == "water"
-               })?.source == nil,
-               "bulk deletion must clear affected sources without reordering layers")
-        print("✓ material stack persistence, filtering, history and deletion semantics")
+        """.utf8))
+        migrated.ensureLayout()
+        let encoded = try migrated.encodedString()
+        let root = try JSONSerialization.jsonObject(
+            with: Data(encoded.utf8)) as? [String: Any]
+        expect(root?["formatVersion"] as? Int == 2,
+               "v3 input should normalize to formatVersion 2")
+        expect(root?["retiredExtension"] == nil,
+               "unsupported legacy extension fields should be discarded")
     } catch {
-        expect(false, "material stack viewer semantics failed: \(error)")
+        expect(false, "v3 compatibility migration failed: \(error)")
     }
-
-    var incompleteCandidates = GraphDocument.emptyDocument(width: 32, height: 32)
-    let completeTerrain = incompleteCandidates.addNode(type: "perlin")
-    let incompleteFilter = incompleteCandidates.addNode(type: "erosionfilter")
-    let incompleteRiver = incompleteCandidates.addNode(type: "river")
-    let incompleteRemap = incompleteCandidates.addNode(type: "remap")
-    expect(incompleteCandidates.materialTerrainCandidates() == [
-        GraphOutputReference(node: completeTerrain, output: "height")
-    ], "terrain candidates should exclude nodes with missing dependencies")
-    expect(incompleteCandidates.materialSourceCandidates().isEmpty,
-           "mask/data candidates should exclude nodes with missing dependencies")
-
-    incompleteCandidates.connect(from: completeTerrain, to: incompleteFilter, input: 0)
-    incompleteCandidates.connect(from: completeTerrain, to: incompleteRiver, input: 0)
-    expect(incompleteCandidates.materialTerrainCandidates().contains(
-        GraphOutputReference(node: incompleteFilter, output: "height")),
-        "completed terrain dependency should become a material terrain candidate")
-    expect(incompleteCandidates.materialSourceCandidates().contains(
-        GraphOutputReference(node: incompleteFilter, output: "ridge")),
-        "completed data dependency should become a material source candidate")
-    expect(incompleteCandidates.materialSourceCandidates().contains(
-        GraphOutputReference(node: incompleteRiver, output: "mask")),
-        "completed mask dependency should become a material source candidate")
-    expect(!incompleteCandidates.materialSourceCandidates().contains(
-        GraphOutputReference(node: incompleteRemap, output: "field")),
-        "unconnected inherited output must not be offered as a material source")
-    incompleteCandidates.connect(from: incompleteRiver, output: "mask",
-                                 to: incompleteRemap, input: 0)
-    expect(incompleteCandidates.materialSourceCandidates().contains(
-        GraphOutputReference(node: incompleteRemap, output: "field")),
-        "completed inherited output should become a material source candidate")
+    print("✓ graph v3 compatibility migration")
 
     var duplicateInputs = GraphDocument.emptyDocument(width: 32, height: 32)
     let duplicateTerrain = duplicateInputs.addNode(type: "perlin")
@@ -331,7 +191,7 @@ func runViewerSelfTests() -> Int32 {
     expect(duplicateInputs.terrainReference(for: duplicateOutput) ==
            GraphOutputReference(node: duplicateTerrain, output: "height"),
            "terrain traversal must follow only each effective inbound connection")
-    print("✓ material candidates require complete evaluable dependencies")
+    print("✓ effective connections drive output evaluability")
 
     var history = GraphDocumentHistory(limit: 4)
     history.record(document)
@@ -442,74 +302,6 @@ func runViewerSelfTests() -> Int32 {
            "brush sampler should discard redundant high-frequency events")
     print("✓ realtime bounded mask brush rasterization")
 
-    expect(abs(MaterialPreviewMath.srgbToLinear(0.04045) -
-               (0.04045 / 12.92)) < 1e-12,
-           "sRGB decode breakpoint should use the linear branch")
-    expect(abs(MaterialPreviewMath.linearToSRGB(0.0031308) -
-               (0.0031308 * 12.92)) < 1e-12,
-           "sRGB encode breakpoint should use the linear branch")
-    let decodedRGB = MaterialPreviewMath.srgbToLinear([0, 0.5, 1])
-    expect(decodedRGB.count == 3 && decodedRGB[0] == 0 && decodedRGB[2] == 1 &&
-           abs(decodedRGB[1] - 0.21404114048223255) < 1e-12,
-           "material uniform colors should be decoded to linear light once on CPU")
-    let midpoint = MaterialPreviewMath.blend(
-        colorsSRGB: [[0, 0, 0], [1, 1, 1]], weights: [0.5, 0.5])
-    expect(midpoint.allSatisfy { abs($0 - 0.735356983) < 1e-6 },
-           "material colors must blend in linear light, not sRGB space")
-    let fallbackWeights = Renderer.materialFallbackWeights(texelCount: 2)
-    expect(fallbackWeights == [1, 0, 0, 0, 1, 0, 0, 0],
-           "scalar preview fallback weights should select only the base channel")
-    print("✓ audited sRGB transfer and linear-light material blend")
-
-    if let device = MTLCreateSystemDefaultDevice(),
-       let performanceRenderer = Renderer(device: device, colorFormat: .bgra8Unorm) {
-        let dimension = 512
-        let texels = dimension * dimension
-        let flat = [Float](repeating: 0.5, count: texels)
-        func packedWeights(_ rgba: [Float]) -> [Float] {
-            var result = [Float](repeating: 0, count: texels * 4)
-            for texel in 0..<texels {
-                for channel in 0..<4 { result[texel * 4 + channel] = rgba[channel] }
-            }
-            return result
-        }
-        func median(_ values: [Double]) -> Double {
-            let sorted = values.sorted()
-            return sorted.isEmpty ? .infinity : sorted[sorted.count / 2]
-        }
-        performanceRenderer.applyViewportSettings(
-            lightAzimuthDegrees: 35, lightElevationDegrees: 58,
-            wireframeEnabled: false, displayMode: .material,
-            materialPreset: .natural, maskOpacity: 0.65,
-            gridVisible: false, axisVisible: false,
-            projectionMode: .perspective)
-        performanceRenderer.setPreview(
-            heights: flat, data: flat,
-            weightsRGBA: packedWeights([0.5, 0.5, 0, 0]),
-            width: dimension, height: dimension, dataMatchesHeights: true)
-        let uploadsAfterOneOverlay = performanceRenderer.previewUploadCount
-        let twoChannelTime = median(performanceRenderer.benchmarkFrameTimes(
-            width: 640, height: 400, measuredFrames: 12))
-        performanceRenderer.setPreview(
-            heights: flat, data: flat,
-            weightsRGBA: packedWeights([0.25, 0.25, 0.25, 0.25]),
-            width: dimension, height: dimension, dataMatchesHeights: true)
-        let fourChannelTime = median(performanceRenderer.benchmarkFrameTimes(
-            width: 640, height: 400, measuredFrames: 12))
-        expect(twoChannelTime.isFinite && fourChannelTime.isFinite,
-               "material frame benchmark should complete")
-        expect(performanceRenderer.previewUploadCount == uploadsAfterOneOverlay + 1,
-               "one- and three-overlay previews must use the same single packed upload path")
-        // Timing remains diagnostic rather than pass/fail: GPU scheduling and
-        // thermal contention make a wall-clock ratio unsuitable for a mandatory
-        // functional self-test. Both cases execute the same float4 shader path.
-        print(String(format:
-            "✓ material steady-state render %.2fms (one overlay) / %.2fms (three overlays)",
-            twoChannelTime, fourChannelTime))
-    } else {
-        expect(false, "Metal renderer unavailable for material performance test")
-    }
-
     if let device = MTLCreateSystemDefaultDevice(),
        let renderer = Renderer(device: device, colorFormat: .bgra8Unorm),
        let engine = TerrainEngine(graphPath: "examples/erosion-filter.json") {
@@ -532,194 +324,6 @@ func runViewerSelfTests() -> Int32 {
         print("✓ ephemeral preview and explicit graph-output authoring")
     } else {
         expect(false, "Metal renderer unavailable for preview/output separation test")
-    }
-
-    if let device = MTLCreateSystemDefaultDevice(),
-       let renderer = Renderer(device: device, colorFormat: .bgra8Unorm),
-       let engine = TerrainEngine(graphPath: "examples/material-stack.json") {
-        let model = TerrainModel(engine: engine, renderer: renderer, size: 32)
-        let deadline = Date().addingTimeInterval(15)
-        while model.lastStats.hasPrefix("evaluating") && Date() < deadline {
-            RunLoop.current.run(until: Date().addingTimeInterval(0.01))
-        }
-        expect(model.lastStats.hasPrefix("nodes "),
-               "material model preview should finish in background")
-        var globalModelChanges = 0
-        let modelChangeToken = model.objectWillChange.sink {
-            globalModelChanges += 1
-        }
-        let cameraRevision = model.cameraSignal.revision
-        let cameraActivity = model.previewWorkerActivity()
-        let cameraUploads = renderer.previewUploadCount
-        model.viewportCameraDidChange()
-        modelChangeToken.cancel()
-        expect(model.cameraSignal.revision == cameraRevision + 1 &&
-               globalModelChanges == 0,
-               "camera motion should invalidate only the axis gizmo signal")
-        expect(model.previewWorkerActivity() == cameraActivity &&
-               renderer.previewUploadCount == cameraUploads,
-               "camera motion must not schedule graph work or rebuild preview buffers")
-        let evaluationStatus = model.lastStats
-        let activityBeforeColor = model.previewWorkerActivity()
-        let uploadsBeforeColor = renderer.previewUploadCount
-        let originalBaseColor = [0.22, 0.39, 0.18]
-        model.setMaterialLayerColor(index: 0, color: [0.2, 0.3, 0.4])
-        RunLoop.current.run(until: Date().addingTimeInterval(0.30))
-        model.setMaterialLayerColor(index: 0, color: [0.24, 0.34, 0.44])
-        RunLoop.current.run(until: Date().addingTimeInterval(0.30))
-        model.setMaterialLayerColor(index: 0, color: [0.26, 0.36, 0.46])
-        expect(model.lastStats == evaluationStatus,
-               "color-only material edits must not evaluate the graph again")
-        expect(model.previewWorkerActivity().submitted == activityBeforeColor.submitted,
-               "color-only material edits must not submit preview work")
-        expect(renderer.previewUploadCount == uploadsBeforeColor,
-               "color-only material edits must not rebuild preview buffers")
-        expect(model.previewWorkerActivity().submitted == activityBeforeColor.submitted &&
-               renderer.previewUploadCount == uploadsBeforeColor,
-               "a long continuous color gesture should remain uniform-only")
-        model.undo()
-        expect(model.document.materialStack?.layers[0].previewColorSRGB ==
-               originalBaseColor,
-               "a color gesture spanning the debounce window should undo in one step")
-        expect(!model.isDirty,
-               "undo back to the loaded document must restore clean dirty state")
-        model.setDisplayMode(.terrain)
-        let scalarDeadline = Date().addingTimeInterval(10)
-        while model.lastStats.hasPrefix("evaluating") && Date() < scalarDeadline {
-            RunLoop.current.run(until: Date().addingTimeInterval(0.01))
-        }
-        let activityBeforeCachedMode = model.previewWorkerActivity()
-        model.setDisplayMode(.material)
-        expect(model.previewWorkerActivity().submitted ==
-               activityBeforeCachedMode.submitted &&
-               model.lastStats.hasPrefix("material cached"),
-               "returning to material mode should reuse the packed preview")
-        let residentUploads = renderer.previewUploadCount
-        let residentActivity = model.previewWorkerActivity()
-        model.setDisplayMode(.material)
-        expect(renderer.previewUploadCount == residentUploads &&
-               model.previewWorkerActivity() == residentActivity,
-               "selecting an already resident material mode must be a no-op")
-        let persistedMode = model.document.ui?.preview.displayMode
-        let dirtyBeforeInspect = model.isDirty
-        model.inspectMaterialLayerSource(index: 2)
-        expect(!model.canEditActiveMask,
-               "mask eraser must wait for the inspected scalar preview to become resident")
-        let inspectedMaskDeadline = Date().addingTimeInterval(10)
-        while model.lastStats.hasPrefix("evaluating") &&
-                Date() < inspectedMaskDeadline {
-            RunLoop.current.run(until: Date().addingTimeInterval(0.01))
-        }
-        expect(model.displayMode == .material && persistedMode == .material &&
-               model.document.ui?.preview.displayMode == persistedMode &&
-               model.activeDisplayModeLabel() == "mask" &&
-               model.previewReference == GraphOutputReference(node: "river",
-                                                               output: "mask"),
-               "inspect-source should use an ephemeral scalar mode without changing the document")
-        expect(model.isDirty == dirtyBeforeInspect,
-               "inspect-source must not change document dirty state")
-        expect(model.canEditActiveMask,
-               "evaluated material mask source should expose the mask eraser")
-        model.setMaskBrushEnabled(true)
-        model.setDisplayMode(.material)
-        expect(!model.canEditActiveMask && !model.maskBrushEnabled &&
-               !model.beginMaskBrush(at: CGPoint(x: 0.5, y: 0.5)),
-               "composite material preview must never accept mask brush strokes")
-
-        model.inspectMaterialLayerSource(index: 2)
-        let inspectedReference = model.previewReference
-        model.setMaterialLayerColor(index: 0, color: [0.31, 0.32, 0.33])
-        expect(model.isDirty, "semantic color edit should dirty the document")
-        model.undo()
-        expect(model.previewReference == inspectedReference &&
-               model.activeDisplayModeLabel() == "mask",
-               "undo while inspecting a source should preserve ephemeral preview state")
-        expect(!model.isDirty,
-               "undoing the semantic edit should return to the saved fingerprint")
-        let stackBeforeRemoval = model.document.materialStack
-        model.removeMaterialStack()
-        expect(model.document.materialStack == nil,
-               "material stack should be explicitly removable")
-        model.undo()
-        expect(model.document.materialStack == stackBeforeRemoval,
-               "removing a material stack should participate in undo")
-        print("✓ material color uniforms update without graph evaluation")
-    } else {
-        expect(false, "Metal renderer unavailable for material color test")
-    }
-
-    if let device = MTLCreateSystemDefaultDevice(),
-       let renderer = Renderer(device: device, colorFormat: .bgra8Unorm),
-       let engine = TerrainEngine(graphPath: "examples/material-stack.json") {
-        let model = TerrainModel(engine: engine, renderer: renderer, size: 32)
-        model.inspectMaterialLayerSource(index: 2)
-        let editableDeadline = Date().addingTimeInterval(10)
-        while model.lastStats.hasPrefix("evaluating") && Date() < editableDeadline {
-            RunLoop.current.run(until: Date().addingTimeInterval(0.01))
-        }
-        expect(model.canEditActiveMask,
-               "resident source mask should be editable before topology changes")
-        if let riverInput = model.document.connections.last(where: {
-            $0.to == "river" && $0.input == 0
-        }) {
-            model.setMaskBrushEnabled(true)
-            model.disconnect(riverInput)
-            expect(!model.maskBrushEnabled && !model.canEditActiveMask,
-                   "disconnecting a mask dependency must disable the eraser")
-            model.undo()
-            let restoredDeadline = Date().addingTimeInterval(10)
-            while model.lastStats.hasPrefix("evaluating") && Date() < restoredDeadline {
-                RunLoop.current.run(until: Date().addingTimeInterval(0.01))
-            }
-            expect(!model.maskBrushEnabled && model.canEditActiveMask,
-                   "undo may restore mask evaluability but must not re-enable the eraser")
-        } else {
-            expect(false, "material example river input missing")
-        }
-        model.setMaskBrushEnabled(true)
-        expect(model.beginMaskBrush(at: CGPoint(x: 0.5, y: 0.5)),
-               "resident source should begin a mask stroke")
-        model.deleteSelection()
-        expect(!model.maskBrushEnabled &&
-               model.document.ui?.maskErases["river"] == nil,
-               "deleting during a stroke must end it before removal and leave no orphan edit")
-        expect(model.document.materialStack?.layers.first(where: {
-            $0.id == "water"
-        })?.source == nil,
-               "viewer deletion should empty only the deleted overlay source")
-        model.setDisplayMode(.material)
-        expect(model.lastStats.hasPrefix("invalid material stack") &&
-               model.materialStackIssue != nil,
-               "invalid material stacks must fail composite preview instead of using legacy material")
-        model.runMaterialExport()
-        expect(model.exportStatus.hasPrefix("export failed"),
-               "invalid material stack must block global bundle export")
-        model.undo()
-        expect(model.document.materialStackValidationMessage() == nil,
-               "undo should restore a deleted material source and valid stack")
-        print("✓ invalid material stacks remain repairable without legacy fallback")
-    } else {
-        expect(false, "Metal renderer unavailable for invalid material stack test")
-    }
-
-    if let device = MTLCreateSystemDefaultDevice(),
-       let renderer = Renderer(device: device, colorFormat: .bgra8Unorm),
-       let engine = TerrainEngine(graphPath: "examples/erosion-filter.json") {
-        let model = TerrainModel(engine: engine, renderer: renderer, size: 32)
-        let intendedTerrain = GraphOutputReference(node: model.document.sink,
-                                                   output: model.document.sinkOutput)
-        model.addNode(type: "combine")
-        let incompleteTerrain = model.previewReference
-        expect(!model.materialTerrainOptions.contains(incompleteTerrain),
-               "incomplete inherited terrain must not be a material candidate")
-        model.createMaterialStack()
-        expect(model.document.materialStack?.terrain == intendedTerrain &&
-               model.document.materialStack?.terrain != incompleteTerrain &&
-               model.document.materialStackValidationMessage() == nil,
-               "Create Material Stack must prefer the evaluable graph output terrain")
-        print("✓ material stack creation ignores incomplete preview terrain")
-    } else {
-        expect(false, "Metal renderer unavailable for material creation test")
     }
 
     let previewWorker = TerrainPreviewWorker()
@@ -768,59 +372,6 @@ func runViewerSelfTests() -> Int32 {
            previewActivity.skippedBeforeStart >= 1 && previewActivity.delivered == 1,
            "preview worker should coalesce rapid submissions before evaluation")
     print("✓ asynchronous latest-snapshot preview worker")
-
-    do {
-        let materialText = try String(contentsOfFile: "examples/material-stack.json",
-                                      encoding: .utf8)
-        let materialWorker = TerrainPreviewWorker()
-        var materialFinished = false
-        var materialCompletions = 0
-        let testMaterialColors = [[0.2, 0.3, 0.1], [0.5, 0.5, 0.5],
-                                  [0.1, 0.3, 0.7], [0.8, 0.4, 0.1]]
-        materialWorker.submitMaterial(jsonText: materialText,
-                                      colorsSRGB: testMaterialColors,
-                                      size: 32) { _ in
-            materialCompletions += 1
-        }
-        materialWorker.submitMaterial(jsonText: materialText,
-                                      colorsSRGB: testMaterialColors,
-                                      size: 32) { outcome in
-            materialCompletions += 1
-            if case .success(let preview) = outcome {
-                expect(preview.geometry.count == 32 * 32,
-                       "material worker terrain geometry count")
-                expect(preview.weightsRGBA?.count == 32 * 32 * 4,
-                       "material worker packed weight count")
-                if let weights = preview.weightsRGBA {
-                    var normalized = true
-                    for texel in stride(from: 0, to: 32 * 32, by: 17) {
-                        let start = texel * 4
-                        let sum = weights[start..<(start + 4)].reduce(0, +)
-                        normalized = normalized && abs(sum - 1) < 2e-6
-                    }
-                    expect(normalized, "material preview weights must sum to one")
-                }
-            } else {
-                expect(false, "latest material preview snapshot failed")
-            }
-            materialFinished = true
-        }
-        let materialDeadline = Date().addingTimeInterval(15)
-        while !materialFinished && Date() < materialDeadline {
-            RunLoop.current.run(until: Date().addingTimeInterval(0.01))
-        }
-        expect(materialFinished, "material preview worker timed out")
-        expect(materialCompletions == 1,
-               "stale material preview result should be discarded")
-        let materialActivity = materialWorker.activitySnapshot()
-        expect(materialActivity.submitted == 2 && materialActivity.started == 1 &&
-               materialActivity.skippedBeforeStart >= 1 &&
-               materialActivity.delivered == 1,
-               "material worker should coalesce rapid layer edits")
-        print("✓ asynchronous material preview and stale-result dropping")
-    } catch {
-        expect(false, "material worker fixture failed: \(error)")
-    }
 
     // Every editable parameter must present a finite, stable slider range.
     // A range derived from the parameter's live value slides outward as the

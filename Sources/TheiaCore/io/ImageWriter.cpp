@@ -241,16 +241,4 @@ bool writePNG8RGB(const char* path, const unsigned char* rgb,
                                "writePNG8RGB", error);
 }
 
-bool writePNG8RGBA(const char* path, const unsigned char* rgba,
-                   std::uint32_t width, std::uint32_t height,
-                   std::string& error) {
-    if (!rgba || width == 0 || height == 0) {
-        error = "writePNG8RGBA: empty image";
-        return false;
-    }
-    const int stride = int(width) * 4;
-    return writePNG8Components(path, rgba, width, height, 4, stride,
-                               "writePNG8RGBA", error);
-}
-
 } // namespace theia
