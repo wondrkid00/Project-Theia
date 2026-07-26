@@ -252,6 +252,12 @@ GraphEvalResult graph_export_material_bundle(
 
 // Node/parameter enumeration for the viewer inspector. Strings use the same
 // copy-into-caller-buffer convention as the other Swift-facing accessors.
+// Graph-level world scale. These describe the terrain, so they are graph state
+// rather than per-node params; every physics node reads them.
+double graph_world_terrain_size(GraphHandle* g);
+double graph_world_height_scale(GraphHandle* g);
+bool graph_set_world(GraphHandle* g, double terrainSize, double heightScale);
+
 std::uint32_t graph_node_count(GraphHandle* g);
 std::size_t graph_node_id(GraphHandle* g, std::uint32_t index,
                           char* out, std::size_t cap);

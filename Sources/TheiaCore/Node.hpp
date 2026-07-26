@@ -38,6 +38,17 @@ struct OutputPortDescriptor {
     bool isDefault = false;
 };
 
+// Physical description of the terrain the graph represents. This lives on the
+// GRAPH, not on individual nodes: a terrain has one width and one vertical
+// scale, and letting each node carry its own let five nodes disagree about the
+// same surface (they shipped with heightScale 64, 80 and 100 simultaneously).
+// Note this is NOT perlin/ridged's `heightScale`, which is a noise amplitude in
+// [0,2] and remains a per-node authoring control.
+struct WorldSettings {
+    double terrainSize = 1024.0;   // world width of the terrain
+    double heightScale = 100.0;    // normalized height -> world vertical units
+};
+
 // All node parameters are scalars stored as double (cast as needed by nodes).
 // Ordered map => deterministic iteration for hashing/serialization.
 struct ParamSet {
@@ -60,6 +71,10 @@ public:
     const std::string& type() const { return type_; }
 
     ParamSet params;
+
+    // Populated by Graph before each evaluate() call. Nodes must read scale
+    // from here rather than from params so the whole graph agrees.
+    WorldSettings world;
 
     // Number of heightfield inputs this node consumes (0 for generators).
     virtual std::size_t inputCount() const = 0;

@@ -904,6 +904,62 @@ func runViewerSelfTests() -> Int32 {
         print("✓ typed parameter entry is clamped and snapped like the slider")
     }
 
+    // The viewer decodes documents itself, so it needs the same world-scale
+    // migration the core performs -- otherwise a legacy file would render with
+    // one scale in the viewer and another through the CLI.
+    do {
+        var legacy = try JSONDecoder().decode(GraphDocument.self, from: Data("""
+        {
+          "resolution": { "width": 128, "height": 128 },
+          "sink": "mask",
+          "nodes": [
+            { "id": "base", "type": "perlin", "params": {} },
+            { "id": "mask", "type": "slopemask",
+              "params": { "low": 25.0, "high": 45.0,
+                          "terrainSize": 512.0, "heightScale": 150.0 } },
+            { "id": "t", "type": "thermal",
+              "params": { "talusAngle": 33.0, "terrainSize": 2048.0 } }
+          ],
+          "connections": [ { "from": "base", "to": "mask", "input": 0 } ]
+        }
+        """.utf8))
+        legacy.ensureNodeDefaults()
+        expect(legacy.world.terrainSize == 512.0,
+               "viewer should adopt the first physics node's terrainSize")
+        expect(legacy.world.heightScale == 150.0,
+               "viewer should adopt the first physics node's heightScale")
+        expect(legacy.node(id: "mask")?.params["terrainSize"] == nil,
+               "scale must not survive as a node param in the viewer")
+        expect(legacy.node(id: "t")?.params["terrainSize"] == nil,
+               "later nodes must drop their conflicting scale copy")
+
+        // An authored world block is authoritative over per-node leftovers.
+        var modern = try JSONDecoder().decode(GraphDocument.self, from: Data("""
+        {
+          "resolution": { "width": 128, "height": 128 },
+          "world": { "terrainSize": 300.0, "heightScale": 90.0 },
+          "sink": "mask",
+          "nodes": [
+            { "id": "base", "type": "perlin", "params": {} },
+            { "id": "mask", "type": "slopemask",
+              "params": { "low": 25.0, "high": 45.0, "terrainSize": 512.0 } }
+          ],
+          "connections": [ { "from": "base", "to": "mask", "input": 0 } ]
+        }
+        """.utf8))
+        modern.ensureNodeDefaults()
+        expect(modern.world.terrainSize == 300.0,
+               "an authored world block must win over per-node leftovers")
+
+        // Round-trip: world must survive encode/decode or saving would drop it.
+        let data = try JSONEncoder().encode(modern)
+        let reloaded = try JSONDecoder().decode(GraphDocument.self, from: data)
+        expect(reloaded.world == modern.world, "world must survive a round trip")
+        print("✓ graph-level world scale migrates and round-trips")
+    } catch {
+        expect(false, "world migration fixture failed: \(error)")
+    }
+
     print("\n\(checks) viewer checks, \(failures) failure(s)")
     return failures == 0 ? 0 : 1
 }

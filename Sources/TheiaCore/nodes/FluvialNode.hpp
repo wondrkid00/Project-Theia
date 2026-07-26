@@ -33,8 +33,6 @@ public:
         // channels never sharpen. Higher values steer discharge toward the steepest
         // neighbours, which is the documented remedy for MFD over-dispersion.
         params.set("mfdExponent", 3.0);
-        params.set("terrainSize", 1024.0);
-        params.set("heightScale", 100.0);
         // Lower bound on the slope used for incision. Without it a filled
         // depression is flat, never incises, and becomes a permanent sink that
         // diffusion enlarges. Mirrors `minTilt` in the hydraulic node.

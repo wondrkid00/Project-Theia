@@ -60,6 +60,37 @@ void migrateLegacyLinearDiffusion(Node& n, bool authoredCriticalSlope) {
     it->second /= 10.0;
 }
 
+// Phase 11: terrain width and vertical scale moved from per-node params to a
+// single graph-level world block. A terrain has one width and one vertical
+// scale; carrying them per node let five nodes disagree about the same surface,
+// which shipped as heightScale 64 on thermal, 80 on hydraulic and 100 on the
+// rest. A pre-Phase-11 document has no world block, so the first physics node
+// that carries scale seeds it and every node then drops its own copy.
+// See docs/research/terrain-horizontal-scale-notes.md.
+bool nodeUsesWorldScale(const std::string& type) {
+    return type == "slopemask" || type == "thermal" || type == "hydraulic" ||
+           type == "fluvial" || type == "dropleterosion";
+}
+
+void migrateLegacyNodeScale(Node& n, WorldSettings& world, bool worldAuthored,
+                            bool& adoptedSize, bool& adoptedHeight) {
+    if (!nodeUsesWorldScale(n.type())) return;
+    auto take = [&](const char* key, double& target, bool& adopted) {
+        auto it = n.params.values.find(key);
+        if (it == n.params.values.end()) return;
+        const double value = it->second;
+        n.params.values.erase(it);
+        // A document that states its own world is authoritative; per-node
+        // leftovers are dropped rather than allowed to override it.
+        if (worldAuthored || adopted) return;
+        if (!std::isfinite(value) || value <= 0.0) return;
+        target = value;
+        adopted = true;
+    };
+    take("terrainSize", world.terrainSize, adoptedSize);
+    take("heightScale", world.heightScale, adoptedHeight);
+}
+
 void migrateLegacySlopeMaskDefaults(Node& n) {
     if (n.type() != "slopemask") return;
     const double low = n.params.get("low", 15.0);
@@ -608,10 +639,15 @@ const Heightfield* Graph::evaluate(GPUContext& ctx, const std::string& sinkId,
             return nullptr;
         }
 
-        // Content-hash cache key = node signature + resolution + input keys.
+        // World scale is graph state, not node state, so it must enter the
+        // cache key explicitly or editing it would serve stale fields.
+        n->world = world_;
+        // Content-hash cache key = node signature + resolution + world + inputs.
         std::uint64_t key = n->signature();
         key = hashMix(key, w);
         key = hashMix(key, h);
+        key = hashDouble(key, world_.terrainSize);
+        key = hashDouble(key, world_.heightScale);
         for (const auto& descriptor : outputDescriptors) {
             key = hashMix(key, maskEditSignature(id, descriptor.name));
         }
@@ -730,6 +766,8 @@ std::string Graph::toJSON() const {
     json j;
     j["formatVersion"] = 3;
     j["resolution"] = {{"width", defaultWidth_}, {"height", defaultHeight_}};
+    j["world"] = {{"terrainSize", world_.terrainSize},
+                  {"heightScale", world_.heightScale}};
     if (!defaultSink_.empty()) {
         j["sink"] = defaultSink_;
         auto sinkIt = nodes_.find(defaultSink_);
@@ -884,6 +922,31 @@ bool Graph::fromJSON(const std::string& text, std::string& error) {
         }
     }
 
+    if (j.contains("world")) {
+        const auto& jw = j["world"];
+        if (!jw.is_object()) {
+            error = "world must be an object";
+            return false;
+        }
+        for (const char* key : {"terrainSize", "heightScale"}) {
+            if (!jw.contains(key)) continue;
+            if (!jw[key].is_number()) {
+                error = std::string("world.") + key + " must be a number";
+                return false;
+            }
+            const double value = jw[key].get<double>();
+            if (!std::isfinite(value) || value <= 0.0) {
+                error = std::string("world.") + key + " must be positive and finite";
+                return false;
+            }
+            if (std::string(key) == "terrainSize") next.world_.terrainSize = value;
+            else next.world_.heightScale = value;
+        }
+        next.worldAuthored_ = true;
+    }
+
+    bool adoptedWorldSize = false;
+    bool adoptedWorldHeight = false;
     if (j.contains("nodes")) {
         if (!j["nodes"].is_array()) {
             error = "nodes must be an array";
@@ -915,11 +978,15 @@ bool Graph::fromJSON(const std::string& text, std::string& error) {
                 }
             }
             migrateLegacyCellSize(*n, next.defaultWidth_);
+            // Must precede migrateLegacyNodeScale: it detects a legacy document
+            // by its heightScale, and the scale migration erases that param.
+            migrateLegacySlopeMaskDefaults(*n);
+            migrateLegacyNodeScale(*n, next.world_, next.worldAuthored_,
+                                   adoptedWorldSize, adoptedWorldHeight);
             const bool authoredCriticalSlope =
                 jn.contains("params") && jn["params"].is_object() &&
                 jn["params"].contains("criticalSlope");
             migrateLegacyLinearDiffusion(*n, authoredCriticalSlope);
-            migrateLegacySlopeMaskDefaults(*n);
         }
     }
 
@@ -1141,6 +1208,7 @@ bool Graph::fromJSON(const std::string& text, std::string& error) {
     nodes_ = std::move(next.nodes_);
     inputs_ = std::move(next.inputs_);
     maskErases_ = std::move(next.maskErases_);
+    world_ = next.world_;
     materialStack_ = std::move(next.materialStack_);
     uiMetadataJSON_ = std::move(next.uiMetadataJSON_);
     defaultSink_ = std::move(next.defaultSink_);

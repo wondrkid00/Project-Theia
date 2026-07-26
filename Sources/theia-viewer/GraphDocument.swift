@@ -6,6 +6,14 @@ struct GraphResolution: Codable {
     var height: UInt32
 }
 
+/// Physical description of the terrain, shared by every physics node. A terrain
+/// has one width and one vertical scale; keeping these per-node let operators
+/// disagree about the same surface.
+struct GraphWorld: Codable, Equatable {
+    var terrainSize: Double = 1024
+    var heightScale: Double = 100
+}
+
 struct GraphDocumentNode: Codable, Identifiable {
     var id: String
     var type: String
@@ -301,6 +309,10 @@ struct GraphDocumentUI: Codable {
 struct GraphDocument: Codable {
     var formatVersion: Int
     var resolution: GraphResolution
+    var world: GraphWorld
+    /// True when the document supplied its own world block, so legacy per-node
+    /// scale must not override it during migration.
+    private(set) var worldWasDecoded = false
     var sink: String
     var sinkOutput: String
     var nodes: [GraphDocumentNode]
@@ -309,12 +321,13 @@ struct GraphDocument: Codable {
     var ui: GraphDocumentUI?
 
     enum CodingKeys: String, CodingKey {
-        case formatVersion, resolution, sink, sinkOutput, nodes, connections,
-             materialStack, ui
+        case formatVersion, resolution, world, sink, sinkOutput, nodes,
+             connections, materialStack, ui
     }
 
     init(formatVersion: Int = 3,
          resolution: GraphResolution,
+         world: GraphWorld = GraphWorld(),
          sink: String,
          sinkOutput: String = "",
          nodes: [GraphDocumentNode],
@@ -323,6 +336,8 @@ struct GraphDocument: Codable {
          ui: GraphDocumentUI?) {
         self.formatVersion = formatVersion
         self.resolution = resolution
+        self.world = world
+        self.worldWasDecoded = true
         self.sink = sink
         self.sinkOutput = sinkOutput
         self.nodes = nodes
@@ -336,6 +351,13 @@ struct GraphDocument: Codable {
         formatVersion = try c.decodeIfPresent(Int.self, forKey: .formatVersion) ?? 1
         resolution = try c.decodeIfPresent(GraphResolution.self, forKey: .resolution)
             ?? GraphResolution(width: 512, height: 512)
+        if let decodedWorld = try c.decodeIfPresent(GraphWorld.self, forKey: .world) {
+            world = decodedWorld
+            worldWasDecoded = true
+        } else {
+            world = GraphWorld()
+            worldWasDecoded = false
+        }
         sink = try c.decodeIfPresent(String.self, forKey: .sink) ?? ""
         sinkOutput = try c.decodeIfPresent(String.self, forKey: .sinkOutput) ?? ""
         nodes = try c.decodeIfPresent([GraphDocumentNode].self, forKey: .nodes) ?? []
@@ -357,6 +379,7 @@ struct GraphDocument: Codable {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(3, forKey: .formatVersion)
         try c.encode(resolution, forKey: .resolution)
+        try c.encode(world, forKey: .world)
         if !sink.isEmpty {
             try c.encode(sink, forKey: .sink)
             try c.encode(sinkOutput, forKey: .sinkOutput)
@@ -453,12 +476,42 @@ struct GraphDocument: Codable {
         ui?.maskErases = eraseNodes
     }
 
+    /// Physics nodes that read scale from the graph rather than their own params.
+    static let worldScaleNodeTypes: Set<String> = [
+        "slopemask", "thermal", "hydraulic", "fluvial", "dropleterosion"
+    ]
+
     mutating func ensureNodeDefaults() {
+        migrateLegacyNodeScale()
         for index in nodes.indices {
             let defaults = Self.defaultParams(for: nodes[index].type)
             nodes[index].params = defaults.merging(nodes[index].params) { _, saved in saved }
             migrateLegacySlopeMaskDefaults(index: index)
             migrateLegacyRiverMaskParams(index: index)
+        }
+    }
+
+    /// A pre-world document carries terrainSize/heightScale on each physics
+    /// node. The first node that states them seeds the graph world and every
+    /// node then drops its copy, so the viewer and the core agree on load.
+    /// Must run BEFORE defaults are merged in, or the merge would reinstate
+    /// params that no longer exist on these node types.
+    private mutating func migrateLegacyNodeScale() {
+        var adoptedSize = false
+        var adoptedHeight = false
+        let documentStatesWorld = worldWasDecoded
+        for index in nodes.indices {
+            guard Self.worldScaleNodeTypes.contains(nodes[index].type) else { continue }
+            if let size = nodes[index].params.removeValue(forKey: "terrainSize"),
+               !documentStatesWorld, !adoptedSize, size.isFinite, size > 0 {
+                world.terrainSize = size
+                adoptedSize = true
+            }
+            if let scale = nodes[index].params.removeValue(forKey: "heightScale"),
+               !documentStatesWorld, !adoptedHeight, scale.isFinite, scale > 0 {
+                world.heightScale = scale
+                adoptedHeight = true
+            }
         }
     }
 

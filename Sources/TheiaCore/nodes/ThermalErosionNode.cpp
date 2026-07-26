@@ -44,14 +44,10 @@ bool ThermalErosionNode::evaluate(GPUContext& ctx,
     P.strength = static_cast<float>(params.get("strength", 0.5));
     // Ground spacing comes from the terrain's world width, never from the
     // sampling grid, so the authored talus angle means the same thing at every
-    // resolution. See docs/research/terrain-horizontal-scale-notes.md.
-    const double terrainSize = params.get("terrainSize", 1024.0);
-    if (!std::isfinite(terrainSize) || terrainSize <= 0.0) {
-        error = "thermal '" + id() + "' requires a positive finite terrainSize";
-        return false;
-    }
-    P.cellSize = static_cast<float>(terrainSize / std::max(1u, W - 1));
-    P.heightScale = static_cast<float>(params.get("heightScale", 64.0));
+    // resolution, and it is graph state so every operator agrees about the same
+    // surface. See docs/research/terrain-horizontal-scale-notes.md.
+    P.cellSize = static_cast<float>(world.terrainSize / std::max(1u, W - 1));
+    P.heightScale = static_cast<float>(world.heightScale);
 
     struct Pass { const char* fn; MTL::ComputePipelineState* pso; };
     Pass passes[] = {

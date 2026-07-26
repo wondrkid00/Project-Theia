@@ -1838,6 +1838,29 @@ GraphEvalResult graph_export_material_bundle(
     return result;
 }
 
+double graph_world_terrain_size(GraphHandle* g) {
+    return g ? g->graph.world().terrainSize : 0.0;
+}
+
+double graph_world_height_scale(GraphHandle* g) {
+    return g ? g->graph.world().heightScale : 0.0;
+}
+
+bool graph_set_world(GraphHandle* g, double terrainSize, double heightScale) {
+    if (!g) return false;
+    if (!std::isfinite(terrainSize) || terrainSize <= 0.0 ||
+        !std::isfinite(heightScale) || heightScale <= 0.0) {
+        g->setError(GraphErrorCode::validation,
+                    "world terrainSize and heightScale must be positive and finite");
+        return false;
+    }
+    WorldSettings settings;
+    settings.terrainSize = std::clamp(terrainSize, 1.0, 65536.0);
+    settings.heightScale = std::clamp(heightScale, 1.0, 4096.0);
+    g->graph.setWorld(settings);
+    return true;
+}
+
 std::uint32_t graph_node_count(GraphHandle* g) {
     if (!g) return 0;
     return static_cast<std::uint32_t>(g->graph.nodeCount());

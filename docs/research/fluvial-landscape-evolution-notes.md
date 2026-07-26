@@ -83,9 +83,10 @@ than by sequential priority queues.
 
 - `h` — bed elevation in world vertical units, `h = input * heightScale`. The
   graph input and output remain normalized heights in `[0,1]`.
-- `cell` — ground spacing, derived from `terrainSize` and the grid exactly as
-  in `terrain-horizontal-scale-notes.md`. Fluvial results are therefore
-  resolution-stable by construction.
+- `cell` — ground spacing, derived from the graph's `world.terrainSize` and the
+  grid exactly as in `terrain-horizontal-scale-notes.md`. Scale is graph state,
+  not a node param, so every operator sees the same terrain. Fluvial results are
+  therefore resolution-stable by construction.
 - `A` — upstream drainage area in world area units. A cell contributes its own
   footprint `cell^2` plus everything routed into it.
 - `S` — downstream slope, dimensionless.

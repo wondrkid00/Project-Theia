@@ -548,6 +548,24 @@ final class TerrainModel: ObservableObject {
             ? nil : document.materialStackValidationMessage()
     }
 
+    /// Graph-level terrain scale. Every physics node reads this, so a change
+    /// invalidates the whole cache rather than one node's.
+    func setWorld(terrainSize: Double? = nil, heightScale: Double? = nil) {
+        var updated = document.world
+        if let terrainSize, terrainSize.isFinite, terrainSize > 0 {
+            updated.terrainSize = terrainSize
+        }
+        if let heightScale, heightScale.isFinite, heightScale > 0 {
+            updated.heightScale = heightScale
+        }
+        guard updated != document.world else { return }
+        pushUndo()
+        document.world = updated
+        markDirty()
+        documentCanSave = true
+        syncPreviewWithDocument(markDirty: true)
+    }
+
     func apply(nodeId: String, param: String, value: Double) {
         pushUndo()
         document.setParam(nodeId: nodeId, key: param, value: value)

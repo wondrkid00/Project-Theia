@@ -18,10 +18,8 @@ public:
         params.set("gravity", 9.81);
         params.set("dt", 0.015);
         params.set("minTilt", 0.005);
-        params.set("heightScale", 80.0);
         params.set("pipeArea", 1.0);
         params.set("pipeLength", 1.0);
-        params.set("terrainSize", 1024.0); // world width; spacing = size/(W-1)
     }
     std::size_t inputCount() const override { return 1; }
     bool evaluate(GPUContext& ctx,

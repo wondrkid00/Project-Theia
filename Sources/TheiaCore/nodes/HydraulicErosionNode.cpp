@@ -70,19 +70,19 @@ bool HydraulicErosionNode::evaluate(GPUContext& ctx,
     HydroParamsGPU P{};
     P.width = W;
     P.height = H;
-    float terrainSize = 1024.0f;
+    // Scale comes from the graph, so every operator agrees about the terrain.
+    float terrainSize = static_cast<float>(world.terrainSize);
+    P.heightScale = static_cast<float>(world.heightScale);
     if (!finiteParam(params, "dt", 0.015, P.dt, error) ||
         !finiteParam(params, "rain", 0.010, P.rain, error) ||
         !finiteParam(params, "evaporation", 0.020, P.evaporation, error) ||
         !finiteParam(params, "gravity", 9.81, P.gravity, error) ||
         !finiteParam(params, "pipeArea", 1.0, P.pipeArea, error) ||
         !finiteParam(params, "pipeLength", 1.0, P.pipeLength, error) ||
-        !finiteParam(params, "terrainSize", 1024.0, terrainSize, error) ||
         !finiteParam(params, "sedimentCapacity", 0.65, P.sedimentCap, error) ||
         !finiteParam(params, "suspension", 0.60, P.suspension, error) ||
         !finiteParam(params, "deposition", 0.45, P.deposition, error) ||
-        !finiteParam(params, "minTilt", 0.005, P.minTilt, error) ||
-        !finiteParam(params, "heightScale", 80.0, P.heightScale, error)) {
+        !finiteParam(params, "minTilt", 0.005, P.minTilt, error)) {
         return false;
     }
 

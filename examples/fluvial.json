@@ -4,6 +4,10 @@
     "width": 512,
     "height": 512
   },
+  "world": {
+    "terrainSize": 1024.0,
+    "heightScale": 100.0
+  },
   "sink": "scree",
   "sinkOutput": "height",
   "nodes": [
@@ -32,8 +36,6 @@
         "uplift": 0.0,
         "rain": 1.0,
         "mfdExponent": 3.0,
-        "terrainSize": 1024.0,
-        "heightScale": 100.0,
         "accuracy": 1.0,
         "diffusion": 0.02,
         "criticalSlope": 0.6
@@ -45,9 +47,7 @@
       "params": {
         "iterations": 40,
         "talusAngle": 34.0,
-        "strength": 0.5,
-        "terrainSize": 1024.0,
-        "heightScale": 100.0
+        "strength": 0.5
       }
     }
   ],
