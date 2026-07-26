@@ -29,7 +29,7 @@ struct ContentView: View {
                         .layoutPriority(3)
 
                     AuthoringDock(model: model, viewport: viewport)
-                        .frame(minWidth: 560, minHeight: 320, idealHeight: 380)
+                        .frame(minWidth: 560, minHeight: 378, idealHeight: 420)
                         .layoutPriority(1)
                 }
                 .frame(minWidth: 560, minHeight: 680)

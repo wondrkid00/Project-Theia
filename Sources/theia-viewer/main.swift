@@ -129,6 +129,15 @@ final class AutosaveController: NSObject {
     return false
 }
 
+func windowedFullscreenFrame(visibleFrame: NSRect?, fallback: NSRect) -> NSRect {
+    guard let visibleFrame,
+          visibleFrame.width > 0,
+          visibleFrame.height > 0 else {
+        return fallback
+    }
+    return visibleFrame
+}
+
 let args = parseArgs()
 if args.selfTest {
     exit(runViewerSelfTests())
@@ -240,7 +249,10 @@ let shortcutMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { eve
 
 window.contentView = NSHostingView(
     rootView: ContentView(model: model, viewport: mtkView))
-window.center()
+window.setFrame(
+    windowedFullscreenFrame(visibleFrame: NSScreen.main?.visibleFrame,
+                            fallback: frame),
+    display: false)
 window.makeKeyAndOrderFront(nil)
 app.activate(ignoringOtherApps: true)
 

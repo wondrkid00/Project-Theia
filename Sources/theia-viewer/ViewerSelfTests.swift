@@ -25,6 +25,18 @@ func runViewerSelfTests() -> Int32 {
         }
     }
 
+    let fallbackWindowFrame = NSRect(x: 0, y: 0, width: 1_000, height: 680)
+    let visibleWindowFrame = NSRect(x: 0, y: 48, width: 1_728, height: 1_069)
+    expect(windowedFullscreenFrame(visibleFrame: visibleWindowFrame,
+                                   fallback: fallbackWindowFrame) ==
+           visibleWindowFrame,
+           "interactive window should fill the display's visible frame")
+    expect(windowedFullscreenFrame(visibleFrame: nil,
+                                   fallback: fallbackWindowFrame) ==
+           fallbackWindowFrame,
+           "interactive window should retain a safe fallback without a display")
+    print("✓ windowed fullscreen startup geometry")
+
     do {
         var legacy = try JSONDecoder().decode(GraphDocument.self, from: Data("""
         {

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Open the interactive viewer in windowed fullscreen by default, filling the
+  display's visible work area while preserving the title bar and window controls.
 - Made typed multi-output authoring explicit in the viewer with named input
   ports, field-colored sockets and wires, compatibility guidance, guarded
   connection drops, direct secondary-output preview, and a compatible-node

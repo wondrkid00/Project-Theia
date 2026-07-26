@@ -452,7 +452,7 @@ struct NodeEditorCanvas: View {
                 }
             }
         }
-        .frame(minHeight: 280)
+        .frame(minHeight: 340)
     }
 
     private func nodePosition(_ id: String) -> CGPoint {
