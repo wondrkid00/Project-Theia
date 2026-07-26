@@ -23,10 +23,7 @@ namespace {
 struct RiverParams {
     std::uint32_t seed = 1337;
     float water = 0.65f;        // network density / wetness
-    // Channel width in CELLS, converted from the authored world width by the
-    // caller. Keeping this in cells is what the drawing code needs; authoring it
-    // in cells is what made coverage collapse as the grid refined.
-    float width = 2.0f;
+    float width = 2.0f;         // visible channel width in cells
     std::uint32_t headwaters = 32;
 };
 
@@ -70,20 +67,11 @@ float hashUnit(std::uint32_t seed, std::uint32_t value) {
     return float(x >> 8u) * (1.0f / 16777216.0f);
 }
 
-RiverParams readParams(const ParamSet& params, const WorldSettings& world,
-                       std::uint32_t gridWidth) {
+RiverParams readParams(const ParamSet& params) {
     RiverParams p;
     p.seed = static_cast<std::uint32_t>(std::max(0.0, params.get("seed", 1337)));
     p.water = clamp01(static_cast<float>(params.get("water", 0.65)));
-    // `width` is a world distance. Treating it as a texel count made a river
-    // hold a fixed pixel width while the grid grew, so mask coverage fell from
-    // 20.7% at 128 to 3.2% at 1024 for the same graph. Converting through the
-    // terrain's ground spacing keeps the channel the same real width instead.
-    const double cell =
-        world.terrainSize / static_cast<double>(std::max(1u, gridWidth - 1));
-    const double worldWidth = std::max(0.0, params.get("width", 4.0));
-    p.width = static_cast<float>(
-        std::min(32.0, std::max(0.5, worldWidth / std::max(cell, 1e-6))));
+    p.width = std::min(32.0f, std::max(0.5f, static_cast<float>(params.get("width", 2.0))));
     p.headwaters =
         static_cast<std::uint32_t>(std::min(512.0, std::max(1.0, params.get("headwaters", 32))));
     return p;
@@ -876,7 +864,7 @@ std::vector<float> riverMask(const std::vector<float>& terrain,
 
 RiverNode::RiverNode(std::string id) : Node(std::move(id), "river") {
     params.set("water", 0.65);
-    params.set("width", 4.0);
+    params.set("width", 2.0);
     params.set("headwaters", 32);
     params.set("seed", 1337);
 }
@@ -891,7 +879,7 @@ bool RiverNode::evaluate(GPUContext&,
     const Heightfield* in = inputs[0];
     const std::uint32_t w = in->width();
     const std::uint32_t h = in->height();
-    const RiverParams p = readParams(params, world, w);
+    const RiverParams p = readParams(params);
 
     std::vector<float> terrain(in->data(), in->data() + in->count());
     for (float& v : terrain) v = clamp01(v);

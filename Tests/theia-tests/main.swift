@@ -431,7 +431,6 @@ func slopeMaskGraphJSON(terrainSize: Double, heightScale: Double = 100.0,
     """
     {
       "resolution": { "width": 256, "height": 256 },
-      "world": { "terrainSize": \(terrainSize), "heightScale": \(heightScale) },
       "sink": "mask",
       "nodes": [
         { "id": "p", "type": "perlin", "params": {
@@ -439,7 +438,8 @@ func slopeMaskGraphJSON(terrainSize: Double, heightScale: Double = 100.0,
           "lacunarity": 2.0, "gain": 0.48, "heightScale": 1.0
         } },
         { "id": "mask", "type": "slopemask", "params": {
-          "low": \(low), "high": \(high)
+          "low": \(low), "high": \(high),
+          "heightScale": \(heightScale), "terrainSize": \(terrainSize)
         } }
       ],
       "connections": [ { "from": "p", "to": "mask", "input": 0 } ]
@@ -450,134 +450,6 @@ func slopeMaskGraphJSON(terrainSize: Double, heightScale: Double = 100.0,
 func meanCoverage(_ values: [Float]) -> Double {
     guard !values.isEmpty else { return 0 }
     return Double(values.reduce(0, +)) / Double(values.count)
-}
-
-h.test("World scale is graph state shared by every physics node") {
-    let json = """
-    {
-      "resolution": { "width": 128, "height": 128 },
-      "world": { "terrainSize": 256.0, "heightScale": 200.0 },
-      "sink": "mask",
-      "nodes": [
-        { "id": "p", "type": "perlin", "params": { "seed": 11, "frequency": 3.0 } },
-        { "id": "mask", "type": "slopemask", "params": { "low": 25.0, "high": 45.0 } }
-      ],
-      "connections": [ { "from": "p", "to": "mask", "input": 0 } ]
-    }
-    """
-    guard let g = theia.graph_create() else { h.expect(false, "create"); return }
-    defer { theia.graph_destroy(g) }
-    h.expect(theia.graph_load_json_text(g, json), "load: \(graphError(g))")
-    h.expect(theia.graph_world_terrain_size(g) == 256.0, "world terrainSize round-trip")
-    h.expect(theia.graph_world_height_scale(g) == 200.0, "world heightScale round-trip")
-
-    // Scale is no longer a node param at all, so nothing can set it per-node.
-    h.expect(theia.graph_param_value(g, "mask", "terrainSize", -1) == -1,
-             "terrainSize must not survive as a node param")
-    h.expect(theia.graph_param_value(g, "mask", "heightScale", -1) == -1,
-             "heightScale must not survive as a node param")
-
-    // Changing world scale must invalidate cached fields. If it did not enter
-    // the cache key, this second evaluation would return the first result.
-    var before = [Float](repeating: 0, count: 128 * 128)
-    let r1 = before.withUnsafeMutableBufferPointer {
-        theia.graph_evaluate_heights(g, "mask", 128, 128, $0.baseAddress, $0.count)
-    }
-    h.expect(r1.ok, "first evaluation: \(graphError(g))")
-    h.expect(theia.graph_set_world(g, 1024.0, 200.0), "set world")
-    var after = [Float](repeating: 0, count: 128 * 128)
-    let r2 = after.withUnsafeMutableBufferPointer {
-        theia.graph_evaluate_heights(g, "mask", 128, 128, $0.baseAddress, $0.count)
-    }
-    h.expect(r2.ok, "second evaluation: \(graphError(g))")
-    h.expect(meanAbsoluteDifference(before, after) > 1e-6,
-             "world scale change must invalidate the cache")
-
-    h.expect(!theia.graph_set_world(g, 0.0, 100.0), "non-positive terrainSize rejected")
-    h.expect(!theia.graph_set_world(g, 1024.0, Double.nan), "non-finite heightScale rejected")
-}
-
-h.test("Legacy per-node scale migrates into graph world settings") {
-    // Pre-world documents carried scale on each physics node, and shipped with
-    // thermal at 64, hydraulic at 80 and the rest at 100 - three different
-    // vertical scales describing one terrain. The first node seeds the world.
-    let legacy = """
-    {
-      "resolution": { "width": 128, "height": 128 },
-      "sink": "mask",
-      "nodes": [
-        { "id": "p", "type": "perlin", "params": { "seed": 11 } },
-        { "id": "mask", "type": "slopemask", "params": {
-          "low": 25.0, "high": 45.0, "terrainSize": 512.0, "heightScale": 150.0 } },
-        { "id": "t", "type": "thermal", "params": {
-          "talusAngle": 33.0, "terrainSize": 2048.0, "heightScale": 64.0 } }
-      ],
-      "connections": [
-        { "from": "p", "to": "mask", "input": 0 },
-        { "from": "p", "to": "t", "input": 0 }
-      ]
-    }
-    """
-    guard let g = theia.graph_create() else { h.expect(false, "create"); return }
-    defer { theia.graph_destroy(g) }
-    h.expect(theia.graph_load_json_text(g, legacy), "load legacy: \(graphError(g))")
-    h.expect(theia.graph_world_terrain_size(g) == 512.0,
-             "first physics node should seed terrainSize")
-    h.expect(theia.graph_world_height_scale(g) == 150.0,
-             "first physics node should seed heightScale")
-    h.expect(theia.graph_param_value(g, "t", "terrainSize", -1) == -1,
-             "later nodes must drop their conflicting copy")
-
-    // An explicit world block wins over any per-node leftovers.
-    let mixed = legacy.replacingOccurrences(
-        of: "\"resolution\": { \"width\": 128, \"height\": 128 },",
-        with: "\"resolution\": { \"width\": 128, \"height\": 128 }, \"world\": { \"terrainSize\": 300.0, \"heightScale\": 90.0 },")
-    guard let g2 = theia.graph_create() else { h.expect(false, "create"); return }
-    defer { theia.graph_destroy(g2) }
-    h.expect(theia.graph_load_json_text(g2, mixed), "load mixed: \(graphError(g2))")
-    h.expect(theia.graph_world_terrain_size(g2) == 300.0,
-             "an authored world block must win over per-node leftovers")
-    h.expect(theia.graph_world_height_scale(g2) == 90.0,
-             "an authored world block must win over per-node leftovers")
-}
-
-h.test("River channel width is a world distance, not a texel count") {
-    // Authoring width in texels held a river at a fixed pixel width while the
-    // grid grew, so the same graph covered 20.7% of the surface at 128 and
-    // 3.2% at 1024. Width is now converted through the terrain's spacing.
-    let json = """
-    {
-      "resolution": { "width": 256, "height": 256 },
-      "world": { "terrainSize": 1024.0, "heightScale": 100.0 },
-      "sink": "river",
-      "sinkOutput": "mask",
-      "nodes": [
-        { "id": "p", "type": "perlin", "params": {
-          "seed": 2026, "octaves": 5, "frequency": 2.0 } },
-        { "id": "river", "type": "river", "params": {
-          "headwaters": 24, "seed": 4968, "water": 0.72, "width": 8.0 } }
-      ],
-      "connections": [ { "from": "p", "to": "river", "input": 0 } ]
-    }
-    """
-    var coverages: [Double] = []
-    for size in [128, 256, 512] {
-        guard let g = theia.graph_create() else { h.expect(false, "create"); return }
-        defer { theia.graph_destroy(g) }
-        h.expect(theia.graph_load_json_text(g, json), "load river: \(graphError(g))")
-        var mask = [Float](repeating: 0, count: size * size)
-        let r = mask.withUnsafeMutableBufferPointer {
-            theia.graph_evaluate_heights(g, "river", UInt32(size), UInt32(size),
-                                         $0.baseAddress, $0.count)
-        }
-        h.expect(r.ok, "river at \(size): \(graphError(g))")
-        coverages.append(Double(mask.filter { $0 > 0.1 }.count) / Double(mask.count))
-    }
-    let low = coverages.min() ?? 0
-    let high = coverages.max() ?? 0
-    h.expect(low > 0.005, "river should be visible at every resolution: \(coverages)")
-    h.expect(high / max(low, 1e-9) < 1.8,
-             "river coverage drifted with resolution: \(coverages)")
 }
 
 h.test("Slope mask coverage is stable across sampling resolutions") {
@@ -622,29 +494,17 @@ h.test("Slope depends only on the vertical-to-horizontal ratio") {
              "halving terrainSize should steepen the mask")
 }
 
-h.test("Degenerate world scale is rejected at the graph boundary") {
-    // Scale is graph state, so it is validated once on the way in rather than
-    // by each node -- a node can no longer be handed a degenerate world.
-    for bad in [0.0, -256.0, Double.nan, Double.infinity] {
+h.test("Slope mask rejects a degenerate terrain size") {
+    for bad in ["0.0", "-256.0"] {
         guard let g = theia.graph_create() else { h.expect(false, "create"); return }
         defer { theia.graph_destroy(g) }
-        h.expect(theia.graph_load_json_text(g, slopeMaskGraphJSON(terrainSize: 256)),
+        h.expect(theia.graph_load_json_text(g, slopeMaskGraphJSON(terrainSize: 1)),
                  "load: \(graphError(g))")
-        h.expect(!theia.graph_set_world(g, bad, 100.0),
-                 "terrainSize \(bad) must be rejected")
-        h.expect(!theia.graph_set_world(g, 1024.0, bad),
-                 "heightScale \(bad) must be rejected")
+        h.expect(theia.graph_set_param(g, "mask", "terrainSize", Double(bad) ?? 0),
+                 "set terrainSize \(bad)")
+        let r = theia.graph_evaluate(g, "mask", 128, 128, nil, nil)
+        h.expect(!r.ok, "terrainSize \(bad) should fail evaluation")
     }
-    let bad = """
-    { "resolution": { "width": 64, "height": 64 },
-      "world": { "terrainSize": -5.0 },
-      "sink": "p",
-      "nodes": [ { "id": "p", "type": "perlin", "params": {} } ] }
-    """
-    guard let g = theia.graph_create() else { h.expect(false, "create"); return }
-    defer { theia.graph_destroy(g) }
-    h.expect(!theia.graph_load_json_text(g, bad),
-             "a document with a degenerate world must fail to load")
 }
 
 h.test("Legacy cellSize migrates at the document's declared resolution") {
@@ -666,12 +526,10 @@ h.test("Legacy cellSize migrates at the document's declared resolution") {
     h.expect(theia.graph_load_json_text(g, json), "load: \(graphError(g))")
     // cellSize 2.0 over 95 intervals is a 190-unit world; reproducing it keeps
     // the document rendering exactly as it did at its own declared grid.
-    h.expect(theia.graph_world_terrain_size(g) == 190.0,
-             "legacy cellSize should migrate into the graph world width")
+    h.expect(theia.graph_param_value(g, "mask", "terrainSize", -1) == 190.0,
+             "legacy cellSize should migrate to an equivalent terrainSize")
     h.expect(theia.graph_param_value(g, "mask", "cellSize", -1) == -1,
              "legacy cellSize should not survive migration")
-    h.expect(theia.graph_param_value(g, "mask", "terrainSize", -1) == -1,
-             "scale must not reappear as a node param")
 }
 
 h.test("Legacy slope mask defaults migrate to preview-safe values") {
@@ -693,8 +551,8 @@ h.test("Legacy slope mask defaults migrate to preview-safe values") {
     }
     """
     h.expect(theia.graph_load_json_text(g, json), "load: \(graphError(g))")
-    h.expect(theia.graph_world_height_scale(g) == 100.0,
-             "legacy slopemask heightScale should migrate into the graph world")
+    h.expect(theia.graph_param_value(g, "mask", "heightScale", -1) == 100.0,
+             "legacy slopemask heightScale should migrate")
     h.expect(theia.graph_param_value(g, "mask", "low", -1) == 15.0,
              "legacy slopemask low should migrate")
     h.expect(theia.graph_param_value(g, "mask", "high", -1) == 50.0,
@@ -1446,8 +1304,8 @@ h.test("Default node parameter enumeration supports node creation") {
              "scalebias default scale")
     h.expect(theia.graph_default_param_value("combine", "t", -1) == 0.5,
              "combine default t")
-    h.expect(theia.graph_default_param_value("slopemask", "heightScale", -1) == -1,
-             "slopemask must not expose heightScale; scale is graph state")
+    h.expect(theia.graph_default_param_value("slopemask", "heightScale", -1) == 100.0,
+             "slopemask default heightScale")
     h.expect(theia.graph_default_param_value("slopemask", "low", -1) == 15.0,
              "slopemask default low")
     h.expect(theia.graph_default_param_value("slopemask", "high", -1) == 50.0,
@@ -3457,15 +3315,14 @@ h.test("Particle hydrology and river nodes are registered and expose defaults") 
 
     h.expect(theia.graph_node_type_input_count("dropleterosion") == 1,
              "dropleterosion input count")
-    // 10, not 11: heightScale moved to graph-level world settings.
-    h.expect(theia.graph_default_param_count("dropleterosion") == 10,
+    h.expect(theia.graph_default_param_count("dropleterosion") == 11,
              "dropleterosion default count")
     let dropletDefaults: [(String, Double)] = [
         ("seed", 1337), ("particles", 40000), ("maxAge", 300),
         ("evaporation", 0.010), ("deposition", 0.20),
         ("entrainment", 1.0), ("gravity", 1.0),
         ("momentumTransfer", 1.0), ("settling", 0.50),
-        ("maxDiff", 0.100),
+        ("maxDiff", 0.100), ("heightScale", 100.0),
     ]
     for (key, expected) in dropletDefaults {
         h.expect(theia.graph_default_param_value("dropleterosion", key, -1) == expected,
@@ -3478,8 +3335,8 @@ h.test("Particle hydrology and river nodes are registered and expose defaults") 
              "river seed default")
     h.expect(theia.graph_default_param_value("river", "water", -1) == 0.65,
              "river water default")
-    h.expect(theia.graph_default_param_value("river", "width", -1) == 4.0,
-             "river width default is a world distance, not texels")
+    h.expect(theia.graph_default_param_value("river", "width", -1) == 2.0,
+             "river width default")
     h.expect(theia.graph_default_param_value("river", "headwaters", -1) == 32,
              "river headwaters default")
     for removed in ["depth", "downcutting", "renderSurface", "riverValleyWidth"] {

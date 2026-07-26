@@ -1,12 +1,5 @@
 {
-  "resolution": {
-    "width": 512,
-    "height": 512
-  },
-  "world": {
-    "terrainSize": 1024.0,
-    "heightScale": 100.0
-  },
+  "resolution": { "width": 512, "height": 512 },
   "sink": "out",
   "nodes": [
     {
@@ -28,13 +21,14 @@
         "seed": 2027,
         "particles": 40000,
         "maxAge": 300,
-        "evaporation": 0.01,
-        "deposition": 0.2,
+        "evaporation": 0.010,
+        "deposition": 0.20,
         "entrainment": 1.0,
         "gravity": 1.0,
         "momentumTransfer": 1.0,
-        "settling": 0.5,
-        "maxDiff": 0.1
+        "settling": 0.50,
+        "maxDiff": 0.100,
+        "heightScale": 100.0
       }
     },
     {
@@ -43,7 +37,8 @@
       "params": {
         "iterations": 35,
         "talusAngle": 34.0,
-        "strength": 0.35
+        "strength": 0.35,
+        "heightScale": 64.0
       }
     },
     {
@@ -53,40 +48,16 @@
     }
   ],
   "connections": [
-    {
-      "from": "base",
-      "to": "drops",
-      "input": 0
-    },
-    {
-      "from": "drops",
-      "to": "settle",
-      "input": 0
-    },
-    {
-      "from": "settle",
-      "to": "out",
-      "input": 0
-    }
+    { "from": "base", "to": "drops", "input": 0 },
+    { "from": "drops", "to": "settle", "input": 0 },
+    { "from": "settle", "to": "out", "input": 0 }
   ],
   "ui": {
     "positions": {
-      "base": {
-        "x": 80,
-        "y": 120
-      },
-      "drops": {
-        "x": 320,
-        "y": 120
-      },
-      "settle": {
-        "x": 560,
-        "y": 120
-      },
-      "out": {
-        "x": 800,
-        "y": 120
-      }
+      "base": { "x": 80, "y": 120 },
+      "drops": { "x": 320, "y": 120 },
+      "settle": { "x": 560, "y": 120 },
+      "out": { "x": 800, "y": 120 }
     }
   }
 }

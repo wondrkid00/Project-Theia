@@ -1,59 +1,25 @@
 {
-  "resolution": {
-    "width": 512,
-    "height": 512
-  },
-  "world": {
-    "terrainSize": 1024.0,
-    "heightScale": 80.0
-  },
+  "resolution": { "width": 512, "height": 512 },
   "sink": "thermal",
   "nodes": [
     {
       "id": "base",
       "type": "perlin",
-      "params": {
-        "seed": 2024,
-        "octaves": 7,
-        "frequency": 5.0,
-        "lacunarity": 2.0,
-        "gain": 0.5
-      }
+      "params": { "seed": 2024, "octaves": 7, "frequency": 5.0, "lacunarity": 2.0, "gain": 0.5 }
     },
     {
       "id": "ero",
       "type": "hydraulic",
-      "params": {
-        "iterations": 200,
-        "rain": 0.01,
-        "evaporation": 0.02,
-        "sedimentCapacity": 0.65,
-        "suspension": 0.6,
-        "deposition": 0.45,
-        "dt": 0.015,
-        "minTilt": 0.005
-      }
+      "params": { "iterations": 200, "rain": 0.010, "evaporation": 0.020, "sedimentCapacity": 0.65, "suspension": 0.60, "deposition": 0.45, "dt": 0.015, "minTilt": 0.005, "heightScale": 80.0 }
     },
     {
       "id": "thermal",
       "type": "thermal",
-      "params": {
-        "iterations": 60,
-        "talusAngle": 32.0,
-        "strength": 0.5
-      }
+      "params": { "iterations": 60, "talusAngle": 32.0, "strength": 0.5, "heightScale": 80.0 }
     }
   ],
   "connections": [
-    {
-      "from": "base",
-      "to": "ero",
-      "input": 0
-    },
-    {
-      "from": "ero",
-      "to": "thermal",
-      "input": 0
-    }
+    { "from": "base", "to": "ero", "input": 0 },
+    { "from": "ero", "to": "thermal", "input": 0 }
   ]
 }

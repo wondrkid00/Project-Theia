@@ -1,13 +1,6 @@
 {
   "formatVersion": 3,
-  "resolution": {
-    "width": 512,
-    "height": 512
-  },
-  "world": {
-    "terrainSize": 256.0,
-    "heightScale": 100.0
-  },
+  "resolution": { "width": 512, "height": 512 },
   "sink": "gullies",
   "sinkOutput": "height",
   "nodes": [
@@ -42,7 +35,9 @@
       "type": "slopemask",
       "params": {
         "low": 25.0,
-        "high": 45.0
+        "high": 45.0,
+        "heightScale": 100.0,
+        "terrainSize": 256.0
       }
     },
     {
@@ -69,84 +64,36 @@
     }
   ],
   "connections": [
-    {
-      "from": "base",
-      "output": "height",
-      "to": "gullies",
-      "input": 0
-    },
-    {
-      "from": "gullies",
-      "output": "height",
-      "to": "steep",
-      "input": 0
-    },
-    {
-      "from": "gullies",
-      "output": "height",
-      "to": "river",
-      "input": 0
-    },
-    {
-      "from": "gullies",
-      "output": "ridge",
-      "to": "ridgecoverage",
-      "input": 0
-    }
+    { "from": "base", "output": "height", "to": "gullies", "input": 0 },
+    { "from": "gullies", "output": "height", "to": "steep", "input": 0 },
+    { "from": "gullies", "output": "height", "to": "river", "input": 0 },
+    { "from": "gullies", "output": "ridge", "to": "ridgecoverage", "input": 0 }
   ],
   "materialStack": {
-    "terrain": {
-      "node": "gullies",
-      "output": "height"
-    },
+    "terrain": { "node": "gullies", "output": "height" },
     "layers": [
       {
         "id": "ground",
         "name": "Ground",
-        "previewColorSRGB": [
-          0.22,
-          0.39,
-          0.18
-        ]
+        "previewColorSRGB": [0.22, 0.39, 0.18]
       },
       {
         "id": "rock",
         "name": "Rock",
-        "previewColorSRGB": [
-          0.25,
-          0.26,
-          0.28
-        ],
-        "source": {
-          "node": "steep",
-          "output": "mask"
-        }
+        "previewColorSRGB": [0.25, 0.26, 0.28],
+        "source": { "node": "steep", "output": "mask" }
       },
       {
         "id": "water",
         "name": "River",
-        "previewColorSRGB": [
-          0.1,
-          0.38,
-          0.72
-        ],
-        "source": {
-          "node": "river",
-          "output": "mask"
-        }
+        "previewColorSRGB": [0.10, 0.38, 0.72],
+        "source": { "node": "river", "output": "mask" }
       },
       {
         "id": "ridge",
         "name": "Ridge Analysis",
-        "previewColorSRGB": [
-          0.78,
-          0.43,
-          0.12
-        ],
-        "source": {
-          "node": "ridgecoverage",
-          "output": "field"
-        }
+        "previewColorSRGB": [0.78, 0.43, 0.12],
+        "source": { "node": "ridgecoverage", "output": "field" }
       }
     ]
   },
@@ -157,26 +104,11 @@
       "maskOpacity": 0.65
     },
     "positions": {
-      "base": {
-        "x": 80,
-        "y": 180
-      },
-      "gullies": {
-        "x": 330,
-        "y": 180
-      },
-      "steep": {
-        "x": 590,
-        "y": 70
-      },
-      "river": {
-        "x": 590,
-        "y": 290
-      },
-      "ridgecoverage": {
-        "x": 820,
-        "y": 180
-      }
+      "base": { "x": 80, "y": 180 },
+      "gullies": { "x": 330, "y": 180 },
+      "steep": { "x": 590, "y": 70 },
+      "river": { "x": 590, "y": 290 },
+      "ridgecoverage": { "x": 820, "y": 180 }
     }
   }
 }

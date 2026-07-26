@@ -99,9 +99,6 @@ public:
     bool resolvedOutputKind(const std::string& id, const std::string& outputName,
                             FieldKind& kind, std::string& error) const;
 
-    const WorldSettings& world() const { return world_; }
-    void setWorld(const WorldSettings& settings) { world_ = settings; }
-
     bool hasMaterialStack() const { return materialStack_.has_value(); }
     const MaterialStack* materialStack() const {
         return materialStack_ ? &*materialStack_ : nullptr;
@@ -174,10 +171,6 @@ private:
     std::uint64_t materialWeightsBuildCount_ = 0;
     std::map<std::string,
              std::map<std::string, std::vector<MaskEraseStroke>>> maskErases_;
-    WorldSettings world_;
-    // True once a document has supplied its own world block, so legacy per-node
-    // scale is only adopted when the document predates graph-level settings.
-    bool worldAuthored_ = false;
     std::optional<MaterialStack> materialStack_;
     std::string uiMetadataJSON_;
 

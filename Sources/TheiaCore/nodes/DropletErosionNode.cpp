@@ -9,8 +9,7 @@
 namespace theia {
 namespace {
 
-HydrologyParams hydrologyParams(const ParamSet& params,
-                                const WorldSettings& world) {
+HydrologyParams hydrologyParams(const ParamSet& params) {
     HydrologyParams p;
     p.seed = static_cast<std::uint32_t>(std::max(0.0, params.get("seed", 1337)));
     p.particles =
@@ -25,7 +24,7 @@ HydrologyParams hydrologyParams(const ParamSet& params,
         static_cast<float>(params.get("momentumTransfer", 1.0));
     p.settling = static_cast<float>(params.get("settling", 0.50));
     p.maxDiff = static_cast<float>(params.get("maxDiff", 0.10));
-    p.heightScale = static_cast<float>(world.heightScale);
+    p.heightScale = static_cast<float>(params.get("heightScale", 100.0));
     return p;
 }
 
@@ -37,7 +36,7 @@ bool evaluateHydrology(const Node& node, const std::vector<const Heightfield*>& 
     }
     const Heightfield* in = inputs[0];
     return runHydrologySimulation(in->data(), in->width(), in->height(),
-                                  hydrologyParams(node.params, node.world), result, error);
+                                  hydrologyParams(node.params), result, error);
 }
 
 } // namespace
@@ -53,6 +52,7 @@ void setHydrologyDefaults(ParamSet& params) {
     params.set("momentumTransfer", 1.0);
     params.set("settling", 0.50);
     params.set("maxDiff", 0.100);
+    params.set("heightScale", 100.0);
 }
 
 DropletErosionNode::DropletErosionNode(std::string id)

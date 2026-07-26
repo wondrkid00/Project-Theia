@@ -52,27 +52,6 @@ struct NodeParameterInspector: View {
                     .padding(.top, 2)
             }
 
-            // Terrain scale is graph state, so it lives outside the selected
-            // node and stays visible whatever is selected.
-            VStack(alignment: .leading, spacing: 10) {
-                InspectorSectionHeader("TERRAIN")
-                WorldScaleRow(
-                    label: "Terrain Size",
-                    detail: "World width of the whole terrain.",
-                    icon: "arrow.left.and.right",
-                    value: model.document.world.terrainSize,
-                    range: 32...4096, step: 32, precision: 0
-                ) { model.setWorld(terrainSize: $0) }
-                WorldScaleRow(
-                    label: "Height Scale",
-                    detail: "World height of the full 0-1 range. With terrain size, sets how steep everything is.",
-                    icon: "mountain.2.fill",
-                    value: model.document.world.heightScale,
-                    range: 1...4096, step: 1, precision: 0
-                ) { model.setWorld(heightScale: $0) }
-                Divider().opacity(0.45)
-            }
-
             ForEach(visibleNodes) { node in
                 VStack(alignment: .leading, spacing: 14) {
                     InspectorSectionHeader("SELECTED NODE")
@@ -494,51 +473,6 @@ struct ParameterSlider: View {
     private func blendModeName(_ mode: Int) -> String {
         guard blendModeNames.indices.contains(mode) else { return "mix" }
         return blendModeNames[mode]
-    }
-}
-
-/// One graph-level scale control. Mirrors ParameterSlider's clamp/snap contract
-/// so typed entry cannot reach a value the slider could not.
-private struct WorldScaleRow: View {
-    let label: String
-    let detail: String
-    let icon: String
-    let value: Double
-    let range: ClosedRange<Double>
-    let step: Double
-    let precision: Int
-    let onChange: (Double) -> Void
-
-    private var config: SliderConfig {
-        SliderConfig(range: range, step: step, precision: precision)
-    }
-
-    var body: some View {
-        HStack(alignment: .center, spacing: 10) {
-            ParameterIconBox(systemName: icon)
-            VStack(alignment: .leading, spacing: 3) {
-                Text(label)
-                    .font(.callout.weight(.semibold))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.78)
-                Text(detail)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .frame(width: 132, alignment: .leading)
-
-            ExportPlainSlider(value: Binding(get: { value },
-                                             set: { onChange($0) }),
-                              range: range, step: step, isContinuous: true)
-                .frame(minWidth: 96, maxWidth: .infinity)
-
-            InspectorValueField(value: value, config: config,
-                                format: { String(format: "%.\(precision)f", $0) },
-                                onCommit: onChange)
-        }
-        .frame(minHeight: 58)
     }
 }
 

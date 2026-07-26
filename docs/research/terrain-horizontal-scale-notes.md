@@ -128,30 +128,6 @@ detail, so identity is not the correct contract.
 This is the invariant the previous implementation violated — its coverage ratio
 across that range was unbounded, collapsing to exactly zero.
 
-## Scale is graph state, not node state
-
-`terrainSize` and `heightScale` describe the **terrain**, so as of Phase 11 they
-live on the graph and every physics operator reads them. Carrying them per node
-allowed operators to disagree about the same surface, and they shipped that way:
-`thermal` defaulted to `heightScale = 64`, `hydraulic` to `80`, and `slopemask`,
-`fluvial` and `dropleterosion` to `100` — four vertical scales for one terrain,
-with nothing preventing an author from setting a fifth.
-
-The graph serializes a `world` block beside `resolution`. World settings enter
-the evaluation cache key explicitly, since a node signature covers only its own
-params and would otherwise serve stale fields after a scale edit.
-
-`perlin` and `ridged` keep their own `heightScale`. That is a different quantity
-wearing the same name — a noise amplitude in `[0,2]`, not a world vertical
-scale — and it remains a per-node authoring control.
-
-Documents authored before the change carry scale per node. The first physics
-node that states a value seeds the world and every node then drops its copy; a
-document with its own `world` block is authoritative and per-node leftovers are
-discarded rather than allowed to override it. The viewer performs the same
-migration on decode, so a legacy file cannot render at one scale in the viewer
-and another through the CLI.
-
 ## Choice of default
 
 `terrainSize` defaults to **1024.0 world units**, matching `Graph`'s default
@@ -242,18 +218,11 @@ cell exactly at its own declared resolution.
 | Domain handling | non-finite and non-positive `terrainSize` rejected |
 | Legacy migration | `cellSize` documents load and reproduce 1024² behaviour |
 | Talus meaning | authored `talusAngle` yields consistent shedding across grids |
-| Shared scale | scale is absent from node params and read from the graph |
-| Scale invalidation | changing world settings re-evaluates instead of serving cache |
-| Scale migration | legacy per-node values seed the world; an authored block wins |
-| River width | channel coverage bounded across 128/256/512 |
 | Hydraulic stability | existing envelope tests hold with derived `cell` |
 
 ## Limitations
 
 - Square, isotropic, non-georeferenced domain only.
-- One world scale per graph. A document cannot mix scales, which is the point,
-  but it also means a graph cannot compose two terrains of different physical
-  size.
 - Horn's estimator smooths more than Zevenbergen & Thorne on smooth surfaces;
   only Horn is implemented, matching the prior behaviour and GDAL's default.
 - Resolution independence applies to the *operator*, not to the terrain: finer
