@@ -50,6 +50,10 @@ final class Renderer {
     private var axisLineVertexCount = 0
     private(set) var gridW: UInt32 = 0
     private(set) var gridH: UInt32 = 0
+    // Material weights keep their own dimensions: they are sampled by UV in the
+    // fragment shader and are not tied to the decimated display mesh.
+    private var weightGridW: UInt32 = 0
+    private var weightGridH: UInt32 = 0
     private let maxViewerGrid = 768
 
     var camera = OrbitCamera.framed(heightExaggeration: 0.5)
@@ -160,10 +164,11 @@ final class Renderer {
             sampledData = Self.viewerHeights(sourceData, width: width, height: height,
                                              maxGrid: maxViewerGrid)
         }
-        let sampledWeights = weightsRGBA.flatMap {
-            Self.viewerWeights($0, width: width, height: height,
-                               outputWidth: sampledHeights.width,
-                               outputHeight: sampledHeights.height)
+        // Weights stay at full evaluation resolution. The fragment shader
+        // samples them by UV, so material detail is no longer limited by the
+        // display mesh and the preview matches the exported weights PNG.
+        let sampledWeights: [Float]? = weightsRGBA.flatMap {
+            $0.count >= width * height * 4 ? $0 : nil
         }
         terrainBaseHeight = sampledHeights.values.min() ?? 0
         surfaceHeights = sampledHeights.values
@@ -187,6 +192,8 @@ final class Renderer {
                                              length: sampledWeights.count *
                                                 MemoryLayout<Float>.stride,
                                              options: .storageModeShared)
+            weightGridW = UInt32(width)
+            weightGridH = UInt32(height)
             usesMaterialWeights = true
         } else {
             // Allocate the base-only buffer only for scalar previews. Material
@@ -198,6 +205,8 @@ final class Renderer {
                                              length: fallbackWeights.count *
                                                 MemoryLayout<Float>.stride,
                                              options: .storageModeShared)
+            weightGridW = UInt32(sampledHeights.width)
+            weightGridH = UInt32(sampledHeights.height)
             usesMaterialWeights = false
         }
         if gridW != UInt32(sampledHeights.width) || gridH != UInt32(sampledHeights.height) ||
@@ -253,25 +262,6 @@ final class Renderer {
             }
         }
         return (out, outW, outH)
-    }
-
-    private static func viewerWeights(_ weights: [Float], width: Int, height: Int,
-                                      outputWidth: Int, outputHeight: Int) -> [Float]? {
-        guard weights.count >= width * height * 4 else { return nil }
-        if width == outputWidth && height == outputHeight { return weights }
-        let xScale = Double(width - 1) / Double(outputWidth - 1)
-        let yScale = Double(height - 1) / Double(outputHeight - 1)
-        var out = [Float](repeating: 0, count: outputWidth * outputHeight * 4)
-        for y in 0..<outputHeight {
-            let sy = min(height - 1, Int((Double(y) * yScale).rounded()))
-            for x in 0..<outputWidth {
-                let sx = min(width - 1, Int((Double(x) * xScale).rounded()))
-                let source = (sy * width + sx) * 4
-                let destination = (y * outputWidth + x) * 4
-                for channel in 0..<4 { out[destination + channel] = weights[source + channel] }
-            }
-        }
-        return out
     }
 
     private func buildIndices(width: Int, height: Int) {
@@ -355,7 +345,9 @@ final class Renderer {
                          materialColor1: materialColors[1],
                          materialColor2: materialColors[2],
                          materialColor3: materialColors[3],
-                         materialParams: SIMD4<Float>(usesMaterialWeights ? 1 : 0, 0, 0, 0))
+                         materialParams: SIMD4<Float>(usesMaterialWeights ? 1 : 0,
+                                                      Float(weightGridW),
+                                                      Float(weightGridH), 0))
         if let hb = heightBuffer, let db = dataBuffer, let wb = weightBuffer,
            let ib = indexBuffer,
            indexCount > 0 {
@@ -367,8 +359,8 @@ final class Renderer {
             enc.setVertexBuffer(hb, offset: 0, index: 0)
             enc.setVertexBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 1)
             enc.setVertexBuffer(db, offset: 0, index: 2)
-            enc.setVertexBuffer(wb, offset: 0, index: 3)
             enc.setFragmentBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 1)
+            enc.setFragmentBuffer(wb, offset: 0, index: 3)
             enc.drawIndexedPrimitives(type: .triangle, indexCount: indexCount,
                                       indexType: .uint32, indexBuffer: ib,
                                       indexBufferOffset: 0)

@@ -59,6 +59,13 @@ The graph input and output are scalar heights in `[0,1]`. Internally,
 procedural length system. The parameter names are public compatibility names,
 not calibrated SI quantities.
 
+`cellSize` below denotes the solver's internal ground spacing. Since Phase 9 it
+is no longer an authored per-texel constant: it is derived from the authored
+`terrainSize` (the terrain's world width) and the evaluation grid as
+`cellSize = terrainSize / (W - 1)`, so the length system stops shifting with
+resolution. See `terrain-horizontal-scale-notes.md`. All equations in this note
+are unchanged and continue to refer to that physical length.
+
 `heightScale` is vertical scale **inside the simulation**. It must not be
 presented as an output-height multiplier. `minTilt` is a lower bound on
 `sin(alpha)`, not an erosion-strength control. `dt` is a numerical time step,
@@ -186,8 +193,12 @@ Implementation may start only with every invariant mapped to a regression:
 - `minTilt`: lower bound on `sin(alpha)`. Keep small; large values deliberately
   suppress slope selectivity.
 - `heightScale`: vertical simulation scale only.
-- `gravity`, `pipeArea`, `pipeLength`, `cellSize`: advanced virtual-pipe
-  geometry/dynamics controls.
+- `gravity`, `pipeArea`, `pipeLength`: advanced virtual-pipe geometry/dynamics
+  controls.
+- `terrainSize`: the terrain's world width, from which ground spacing is
+  derived. Refining the grid at a fixed `terrainSize` tightens the Courant
+  limit, so authors who refine and want identical character should reduce `dt`
+  proportionally.
 
 The viewer should make `iterations`, `rain`, capacity, suspension, and
 deposition the understandable primary controls. Numerical and pipe geometry

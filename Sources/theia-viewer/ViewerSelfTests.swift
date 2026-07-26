@@ -5,6 +5,14 @@ import simd
 import TheiaCore
 
 @MainActor
+private func availableNodeTypesForSelfTest() -> [String] {
+    readCxxString { theia.node_type_list($0, $1) }
+        .split(separator: ",")
+        .map { $0.trimmingCharacters(in: .whitespaces) }
+        .filter { !$0.isEmpty }
+}
+
+@MainActor
 func runViewerSelfTests() -> Int32 {
     var checks = 0
     var failures = 0
@@ -812,6 +820,88 @@ func runViewerSelfTests() -> Int32 {
         print("✓ asynchronous material preview and stale-result dropping")
     } catch {
         expect(false, "material worker fixture failed: \(error)")
+    }
+
+    // Every editable parameter must present a finite, stable slider range.
+    // A range derived from the parameter's live value slides outward as the
+    // user drags and never reaches an end stop, which reads as an unbounded
+    // control. Checking the range is identical at three very different values
+    // is what pins that down; checking finiteness alone would not catch it.
+    do {
+        var unbounded: [String] = []
+        var unstable: [String] = []
+        var excluded: [String] = []
+        for type in availableNodeTypesForSelfTest() {
+            for (name, defaultValue) in GraphDocument.defaultParams(for: type) {
+                let label = "\(type).\(name)"
+                func config(_ value: Double) -> SliderConfig {
+                    SliderConfig.forParam(GraphParameter(nodeId: "n", nodeType: type,
+                                                         name: name, value: value))
+                }
+                let base = config(defaultValue)
+                guard base.range.lowerBound.isFinite,
+                      base.range.upperBound.isFinite,
+                      base.range.lowerBound < base.range.upperBound,
+                      base.step.isFinite, base.step > 0 else {
+                    unbounded.append(label)
+                    continue
+                }
+                if !base.range.contains(defaultValue) {
+                    excluded.append("\(label) default \(defaultValue) not in \(base.range)")
+                }
+                // Probe well outside the declared range: a value-anchored
+                // fallback would follow the probe instead of holding still.
+                for probe in [defaultValue - 1000, defaultValue + 1000, 0] {
+                    let moved = config(probe)
+                    if moved.range != base.range {
+                        unstable.append("\(label) @\(probe)")
+                        break
+                    }
+                }
+            }
+        }
+        expect(unbounded.isEmpty, "non-finite slider ranges: \(unbounded)")
+        expect(unstable.isEmpty, "slider ranges that follow the value: \(unstable)")
+        // A range that excludes its own default pins the control at an end
+        // stop, so dragging snaps the value instead of editing it. This is how
+        // fluvial's dt (default 0.6) ended up on a 0.001...0.1 slider inherited
+        // from the hydraulic node, which read as a broken control.
+        expect(excluded.isEmpty, "slider ranges excluding their default: \(excluded)")
+        print("✓ every node parameter has a bounded, value-independent slider range")
+    }
+
+    // Typed entry must land exactly where dragging could, for every parameter.
+    // A field that bypassed the slider's clamp would be the one way to push a
+    // value outside the core's envelope and have it silently clamped later.
+    do {
+        var escaped: [String] = []
+        for type in availableNodeTypesForSelfTest() {
+            for (name, defaultValue) in GraphDocument.defaultParams(for: type) {
+                let cfg = SliderConfig.forParam(
+                    GraphParameter(nodeId: "n", nodeType: type, name: name,
+                                   value: defaultValue))
+                let lo = cfg.range.lowerBound, hi = cfg.range.upperBound
+                for probe in [lo - 1e6, hi + 1e6, lo, hi, defaultValue,
+                              (lo + hi) / 2] {
+                    guard let out = InspectorValueField.sanitize(probe, config: cfg)
+                    else {
+                        escaped.append("\(type).\(name) rejected \(probe)")
+                        continue
+                    }
+                    if !(out >= lo - 1e-9 && out <= hi + 1e-9) || !out.isFinite {
+                        escaped.append("\(type).\(name): \(probe) -> \(out)")
+                    }
+                }
+                // Garbage must leave the value alone rather than resolve to 0.
+                for junk in [Double.nan, Double.infinity, -Double.infinity] {
+                    if InspectorValueField.sanitize(junk, config: cfg) != nil {
+                        escaped.append("\(type).\(name) accepted \(junk)")
+                    }
+                }
+            }
+        }
+        expect(escaped.isEmpty, "typed values escaping their range: \(escaped)")
+        print("✓ typed parameter entry is clamped and snapped like the slider")
     }
 
     print("\n\(checks) viewer checks, \(failures) failure(s)")

@@ -457,7 +457,11 @@ struct ParameterSlider: View {
             .overlay(inspectorControlStroke())
             .help("Reset \(presentation.label)")
 
-            InspectorValueBox(text: presentation.format(value, config: config))
+            InspectorValueField(value: value, config: config,
+                                format: { presentation.format($0, config: config) }) { typed in
+                value = typed
+                onChange(typed)
+            }
         }
         .frame(minHeight: 66)
     }
@@ -571,7 +575,16 @@ private struct ParameterPresentation {
         case "momentumTransfer": return "Momentum"
         case "pipeArea": return "Pipe Area"
         case "pipeLength": return "Pipe Length"
-        case "cellSize": return "Cell Size"
+        case "terrainSize": return "Terrain Size"
+        case "erodibility": return "Erodibility"
+        case "areaExponent": return "Area Exponent"
+        case "slopeExponent": return "Slope Exponent"
+        case "mfdExponent": return "Flow Convergence"
+        case "uplift": return "Uplift"
+        case "accuracy": return "Solver Accuracy"
+        case "diffusion": return "Hillslope Diffusion"
+        case "minSlope": return "Slope Floor"
+        case "criticalSlope": return "Critical Slope"
         case "renderSurface": return "Render Surface"
         case "gullyWeight": return "Gully Weight"
         case "ridgeRounding": return "Ridge Rounding"
@@ -613,8 +626,8 @@ private struct ParameterPresentation {
                 return "Cross-section of each virtual flow pipe."
             case "pipeLength":
                 return "Length of each virtual flow pipe."
-            case "cellSize":
-                return "Horizontal spacing represented by one terrain cell."
+            case "terrainSize":
+                return "World width of the terrain. Cell spacing is derived from this and the grid, so results do not shift with resolution."
             case "evaporation":
                 return "Removes water after flow and sediment transport."
             default: break
@@ -672,7 +685,16 @@ private struct ParameterPresentation {
         case "suspension": return "Keeps sediment in flow."
         case "pipeArea": return "Virtual pipe cross-section."
         case "pipeLength": return "Virtual pipe length."
-        case "cellSize": return "Terrain sampling size."
+        case "terrainSize": return "Terrain world width."
+        case "erodibility": return "How fast channels cut (K)."
+        case "areaExponent": return "Discharge influence on incision (m)."
+        case "slopeExponent": return "Slope influence on incision (n)."
+        case "mfdExponent": return "Higher values concentrate flow into sharper channels."
+        case "uplift": return "Sustains relief against erosion. Zero preserves your input."
+        case "accuracy": return "Flow solver iterations. Raise if channels look unresolved."
+        case "diffusion": return "Smooths hillslopes and sets valley spacing. Too low grooves every cell."
+        case "minSlope": return "Lets flat basins keep incising so they drain instead of filling in."
+        case "criticalSlope": return "Gradient where hillslope transport runs away. Lower targets smoothing at steep grooves."
         case "talusAngle": return "Slope stability threshold."
         case "renderSurface": return "Switches preview surface mode."
         case "gullyWeight": return "Balances carved gullies against broad altitude shaping."
@@ -744,7 +766,9 @@ private struct ParameterPresentation {
         let advancedNames: Set<String> = [
             "particles", "maxAge", "iterations", "dt", "pipeArea",
             "pipeLength", "rain", "sedimentCapacity", "suspension",
-            "cellSize", "evaporation", "deposition", "entrainment",
+            "terrainSize", "evaporation", "deposition", "entrainment",
+            "areaExponent", "slopeExponent", "mfdExponent", "accuracy", "minSlope",
+            "criticalSlope",
             "gravity", "momentumTransfer", "settling", "maxDiff"
         ]
         if advancedNames.contains(param.name) {
@@ -790,6 +814,80 @@ struct InspectorValueBox: View {
             .background(inspectorControlFill,
                         in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             .overlay(inspectorControlStroke())
+    }
+}
+
+/// Editable numeric readout. Typing is the only way to reach a precise value
+/// when a slider's step is coarse, so the field commits the same clamped,
+/// step-snapped value the slider would produce — a typed entry can never put a
+/// parameter somewhere dragging could not.
+struct InspectorValueField: View {
+    let value: Double
+    let config: SliderConfig
+    let format: (Double) -> String
+    let onCommit: (Double) -> Void
+
+    @State private var draft: String
+    @FocusState private var focused: Bool
+
+    init(value: Double, config: SliderConfig,
+         format: @escaping (Double) -> String,
+         onCommit: @escaping (Double) -> Void) {
+        self.value = value
+        self.config = config
+        self.format = format
+        self.onCommit = onCommit
+        _draft = State(initialValue: format(value))
+    }
+
+    /// Clamp first, then snap, then clamp again: snapping can push a value one
+    /// step outside a range whose span is not a whole multiple of the step.
+    static func sanitize(_ raw: Double, config: SliderConfig) -> Double? {
+        guard raw.isFinite else { return nil }
+        let lo = config.range.lowerBound
+        let hi = config.range.upperBound
+        var result = min(max(raw, lo), hi)
+        if config.step > 0 {
+            result = lo + ((result - lo) / config.step).rounded() * config.step
+        }
+        return min(max(result, lo), hi)
+    }
+
+    var body: some View {
+        TextField("", text: $draft)
+            .textFieldStyle(.plain)
+            .multilineTextAlignment(.center)
+            .font(.callout.monospacedDigit().weight(.semibold))
+            .foregroundStyle(.primary)
+            .lineLimit(1)
+            .focused($focused)
+            .frame(width: 76, height: 34)
+            .background(inspectorControlFill,
+                        in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay(inspectorControlStroke())
+            .onSubmit(commit)
+            .onChange(of: focused) { wasFocused, isFocused in
+                if wasFocused && !isFocused { commit() }
+            }
+            .onChange(of: value) { _, newValue in
+                // The slider, undo, and reset are all authoritative over an
+                // in-progress draft; keeping the stale text would write it back
+                // on the next blur and silently undo them.
+                draft = format(newValue)
+            }
+            .help("Type a value between \(format(config.range.lowerBound)) "
+                  + "and \(format(config.range.upperBound))")
+    }
+
+    private func commit() {
+        let text = draft.trimmingCharacters(in: .whitespaces)
+        guard let parsed = Double(text),
+              let sanitized = Self.sanitize(parsed, config: config) else {
+            draft = format(value)   // unparseable: restore, never guess
+            return
+        }
+        draft = format(sanitized)
+        if sanitized != value { onCommit(sanitized) }
     }
 }
 
@@ -853,6 +951,9 @@ struct SliderConfig {
             }
             return SliderConfig(range: 1...12, step: 1, precision: 0)
         case "iterations":
+            if param.nodeType == "fluvial" {
+                return SliderConfig(range: 1...400, step: 1, precision: 0)
+            }
             return SliderConfig(range: 1...300, step: 1, precision: 0)
         case "particles":
             return SliderConfig(range: 100...50000, step: 100, precision: 0)
@@ -869,6 +970,9 @@ struct SliderConfig {
             if param.nodeType == "hydraulic" {
                 return SliderConfig(range: 0...0.05, step: 0.001, precision: 3)
             }
+            if param.nodeType == "fluvial" {
+                return SliderConfig(range: 0...8, step: 0.1, precision: 1)
+            }
             return SliderConfig(range: 0...1, step: 0.01, precision: 2)
         case "sedimentCapacity", "suspension":
             return SliderConfig(range: 0...1, step: 0.01, precision: 2)
@@ -878,6 +982,10 @@ struct SliderConfig {
             }
             return SliderConfig(range: 0...1, step: 0.01, precision: 2)
         case "deposition":
+            if param.nodeType == "fluvial" {
+                // G in the Yuan et al. deposition term, not a 0-1 rate.
+                return SliderConfig(range: 0...4, step: 0.05, precision: 2)
+            }
             return SliderConfig(range: 0...0.6, step: 0.01, precision: 2)
         case "evaporation":
             if param.nodeType == "hydraulic" {
@@ -961,6 +1069,9 @@ struct SliderConfig {
         case "talusAngle":
             return SliderConfig(range: 1...60, step: 0.5, precision: 1)
         case "heightScale":
+            if param.nodeType == "fluvial" {
+                return SliderConfig(range: 1...4096, step: 1, precision: 0)
+            }
             if param.nodeType == "perlin" || param.nodeType == "ridged" {
                 return SliderConfig(range: 0...2, step: 0.05, precision: 2)
             }
@@ -975,17 +1086,57 @@ struct SliderConfig {
             if param.nodeType == "hydraulic" {
                 return SliderConfig(range: 0.001...0.025, step: 0.001, precision: 3)
             }
+            if param.nodeType == "fluvial" {
+                // Landscape-evolution time, not storm seconds: the useful step
+                // is ~1, three orders of magnitude above the hydraulic range.
+                return SliderConfig(range: 0.01...2, step: 0.01, precision: 2)
+            }
             return SliderConfig(range: 0.001...0.1, step: 0.001, precision: 3)
         case "gravity":
             if param.nodeType == "hydraulic" {
                 return SliderConfig(range: 0...20, step: 0.1, precision: 1)
             }
             return SliderConfig(range: 0...6, step: 0.1, precision: 1)
-        case "pipeArea", "pipeLength", "cellSize":
+        case "pipeArea", "pipeLength":
             return SliderConfig(range: 0.1...4, step: 0.1, precision: 1)
+        case "terrainSize":
+            return SliderConfig(range: 32...4096, step: 32, precision: 0)
+
+        // Fluvial (stream power) controls. Each range is identical to the
+        // clamp the core applies, so a value set here is never silently
+        // rewritten on evaluation.
+        case "erodibility":
+            return SliderConfig(range: 0...2, step: 0.01, precision: 2)
+        case "areaExponent":
+            return SliderConfig(range: 0...1, step: 0.01, precision: 2)
+        case "slopeExponent":
+            return SliderConfig(range: 0.1...4, step: 0.05, precision: 2)
+        case "uplift":
+            return SliderConfig(range: 0...1, step: 0.01, precision: 2)
+        case "mfdExponent":
+            return SliderConfig(range: 0.5...6, step: 0.1, precision: 1)
+        case "diffusion":
+            return SliderConfig(range: 0...0.5, step: 0.005, precision: 3)
+        case "criticalSlope":
+            return SliderConfig(range: 0.1...4, step: 0.05, precision: 2)
+        case "accuracy":
+            return SliderConfig(range: 0.25...4, step: 0.25, precision: 2)
+        case "minSlope":
+            return SliderConfig(range: 0...0.1, step: 0.001, precision: 3)
+
         default:
-            let span = max(1, abs(value) * 2)
-            return SliderConfig(range: (value - span)...(value + span),
+            // Anchor the fallback on the node's DEFAULT value, not the live
+            // one. A range derived from the live value slides outward as the
+            // user drags, so the control never reaches an end stop and behaves
+            // as if unbounded. Anchoring makes it stable and finite, and the
+            // hard cap keeps a pathological default from reintroducing that.
+            let anchor = GraphDocument.defaultParams(for: param.nodeType)[param.name]
+                ?? value
+            let base = anchor.isFinite ? anchor : 0
+            let span = max(1, abs(base) * 4)
+            let lower = max(-1_000_000, base - span)
+            let upper = min(1_000_000, base + span)
+            return SliderConfig(range: lower...max(upper, lower + 1e-6),
                                 step: span / 100,
                                 precision: 2)
         }

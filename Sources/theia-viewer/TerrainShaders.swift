@@ -19,7 +19,7 @@ struct Uniforms {
     float4 materialColor1;
     float4 materialColor2;
     float4 materialColor3;
-    float4 materialParams; // x=packed weights available
+    float4 materialParams; // x=packed weights available, yz=weight grid size
 };
 
 struct VOut {
@@ -27,7 +27,6 @@ struct VOut {
     float3 normal;
     float  height;
     float  data;
-    float4 weights;
     float2 uv;
 };
 
@@ -44,8 +43,7 @@ struct LineOut {
 vertex VOut terrain_vertex(uint vid [[vertex_id]],
                            const device float* heights [[buffer(0)]],
                            constant Uniforms& U [[buffer(1)]],
-                           const device float* dataValues [[buffer(2)]],
-                           const device float4* materialWeights [[buffer(3)]]) {
+                           const device float* dataValues [[buffer(2)]]) {
     uint gridW = U.gridParams.x;
     uint gridH = U.gridParams.y;
     float heightScale = U.viewportParams.x;
@@ -78,7 +76,6 @@ vertex VOut terrain_vertex(uint vid [[vertex_id]],
     o.normal = N;
     o.height = h;
     o.data = d;
-    o.weights = materialWeights[gz * gridW + gx];
     o.uv = float2(float(gx) / float(gridW - 1),
                   float(gz) / float(gridH - 1));
     return o;
@@ -161,7 +158,8 @@ float4 applyBrushDecal(float4 base, float2 uv, constant Uniforms& U) {
 }
 
 fragment float4 terrain_fragment(VOut in [[stage_in]],
-                                 constant Uniforms& U [[buffer(1)]]) {
+                                 constant Uniforms& U [[buffer(1)]],
+                                 const device float4* materialWeights [[buffer(3)]]) {
     float3 N = normalize(in.normal);
     float3 L = normalize(U.lightDirection.xyz);
     float diff = max(0.0, dot(N, L));
@@ -207,7 +205,17 @@ fragment float4 terrain_fragment(VOut in [[stage_in]],
 
     if (mode == 5) {
         if (U.materialParams.x > 0.5) {
-            float4 weights = max(in.weights, 0.0);
+            // Sample the packed weights per fragment rather than interpolating
+            // a per-vertex value. Gouraud interpolation smeared every material
+            // boundary across a mesh cell, so the preview disagreed with the
+            // exported weights PNG; nearest sampling shows the exported texel.
+            uint gw = max(uint(U.materialParams.y + 0.5), 1u);
+            uint gh = max(uint(U.materialParams.z + 0.5), 1u);
+            uint sx = min(uint(clamp(in.uv.x, 0.0, 1.0) * float(gw - 1) + 0.5),
+                          gw - 1);
+            uint sy = min(uint(clamp(in.uv.y, 0.0, 1.0) * float(gh - 1) + 0.5),
+                          gh - 1);
+            float4 weights = max(materialWeights[sy * gw + sx], 0.0);
             float sum = max(dot(weights, float4(1.0)), 0.000001);
             weights /= sum;
             float3 linearColor =

@@ -174,7 +174,7 @@ using namespace metal;
 
 kernel void slopemask(device float*        out [[buffer(0)]],
                       device const float*  in  [[buffer(1)]],
-                      constant float4&     pr  [[buffer(2)]],  // x=lowDeg, y=highDeg, z=heightScale, w=cellSize
+                      constant float4&     pr  [[buffer(2)]],  // x=lowDeg, y=highDeg, z=heightScale, w=terrainSize
                       constant uint2&      dim [[buffer(3)]],
                       uint2                gid [[thread_position_in_grid]])
 {
@@ -196,9 +196,10 @@ kernel void slopemask(device float*        out [[buffer(0)]],
     float z8 = in[yp * W + x]  * pr.z;
     float z9 = in[yp * W + xp] * pr.z;
 
-    // Per-cell spacing (matches the erosion nodes: heights *= heightScale over
-    // a unit cellSize). Using a Sobel/Horn gradient as in gdaldem slope.
-    float cell = max(pr.w, 1e-6);
+    // Horn (1981) third-order estimator, as in gdaldem slope. The denominator
+    // is ground distance, so spacing comes from the terrain's world extent and
+    // never from the sampling grid — see terrain-horizontal-scale-notes.md.
+    float cell = max(pr.w / float(max(W, 2u) - 1u), 1e-6);
     float dzdx = ((z3 + 2.0 * z6 + z9) - (z1 + 2.0 * z4 + z7)) / (8.0 * cell);
     float dzdy = ((z7 + 2.0 * z8 + z9) - (z1 + 2.0 * z2 + z3)) / (8.0 * cell);
     float slopeDeg = atan(sqrt(dzdx * dzdx + dzdy * dzdy)) * 57.2957795131;

@@ -421,6 +421,117 @@ h.test("Slope mask is a valid [0,1] mask with variation") {
     h.expect(r.variance > 1e-6, "mask has no variation")
 }
 
+// Horizontal spacing is ground distance derived from the terrain's world width,
+// so a slope operator must not drift with the sampling grid. Before this was
+// enforced, the material example's slope layer measured [0,1] at 128 and
+// [0,0] at 1024, and the suite missed it by only ever evaluating at 128.
+// See docs/research/terrain-horizontal-scale-notes.md.
+func slopeMaskGraphJSON(terrainSize: Double, heightScale: Double = 100.0,
+                        low: Double = 25.0, high: Double = 45.0) -> String {
+    """
+    {
+      "resolution": { "width": 256, "height": 256 },
+      "sink": "mask",
+      "nodes": [
+        { "id": "p", "type": "perlin", "params": {
+          "seed": 2026, "frequency": 1.6, "octaves": 4,
+          "lacunarity": 2.0, "gain": 0.48, "heightScale": 1.0
+        } },
+        { "id": "mask", "type": "slopemask", "params": {
+          "low": \(low), "high": \(high),
+          "heightScale": \(heightScale), "terrainSize": \(terrainSize)
+        } }
+      ],
+      "connections": [ { "from": "p", "to": "mask", "input": 0 } ]
+    }
+    """
+}
+
+func meanCoverage(_ values: [Float]) -> Double {
+    guard !values.isEmpty else { return 0 }
+    return Double(values.reduce(0, +)) / Double(values.count)
+}
+
+h.test("Slope mask coverage is stable across sampling resolutions") {
+    let json = slopeMaskGraphJSON(terrainSize: 256)
+    let grids: [UInt32] = [128, 256, 512, 1024]
+    var coverages: [Double] = []
+    for grid in grids {
+        let mask = evalGraphHeightsJSON(json, sink: "mask", size: grid)
+        h.expect(mask.allSatisfy { $0.isFinite && $0 >= 0 && $0 <= 1 },
+                 "slope mask left [0,1] at \(grid)")
+        let coverage = meanCoverage(mask)
+        h.expect(coverage > 0.01,
+                 "slope mask vanished at \(grid): coverage \(coverage)")
+        coverages.append(coverage)
+    }
+    // Finer grids legitimately resolve finer detail, so the contract is a
+    // bounded ratio rather than equality. The pre-fix implementation collapsed
+    // to exactly zero here, an unbounded ratio.
+    let low = coverages.min() ?? 0
+    let high = coverages.max() ?? 0
+    h.expect(low > 0 && high / low < 2.0,
+             "slope coverage drifted with resolution: \(coverages)")
+}
+
+h.test("Slope depends only on the vertical-to-horizontal ratio") {
+    // GDAL's -scale is the ratio of vertical to horizontal units, so scaling
+    // both by the same factor must leave the emitted angle untouched.
+    let baseline = evalGraphHeightsJSON(
+        slopeMaskGraphJSON(terrainSize: 256, heightScale: 100), sink: "mask", size: 256)
+    let doubled = evalGraphHeightsJSON(
+        slopeMaskGraphJSON(terrainSize: 512, heightScale: 200), sink: "mask", size: 256)
+    h.expect(baseline.count == doubled.count && !baseline.isEmpty,
+             "ratio fixtures must be comparable")
+    h.expect(meanAbsoluteDifference(baseline, doubled) < 1e-6,
+             "equal vertical/horizontal ratio changed the slope mask")
+
+    // A steeper ratio must produce strictly more coverage, so the parameter is
+    // not merely inert.
+    let steeper = evalGraphHeightsJSON(
+        slopeMaskGraphJSON(terrainSize: 128, heightScale: 100), sink: "mask", size: 256)
+    h.expect(meanCoverage(steeper) > meanCoverage(baseline) + 0.01,
+             "halving terrainSize should steepen the mask")
+}
+
+h.test("Slope mask rejects a degenerate terrain size") {
+    for bad in ["0.0", "-256.0"] {
+        guard let g = theia.graph_create() else { h.expect(false, "create"); return }
+        defer { theia.graph_destroy(g) }
+        h.expect(theia.graph_load_json_text(g, slopeMaskGraphJSON(terrainSize: 1)),
+                 "load: \(graphError(g))")
+        h.expect(theia.graph_set_param(g, "mask", "terrainSize", Double(bad) ?? 0),
+                 "set terrainSize \(bad)")
+        let r = theia.graph_evaluate(g, "mask", 128, 128, nil, nil)
+        h.expect(!r.ok, "terrainSize \(bad) should fail evaluation")
+    }
+}
+
+h.test("Legacy cellSize migrates at the document's declared resolution") {
+    let json = """
+    {
+      "resolution": { "width": 96, "height": 96 },
+      "sink": "mask",
+      "nodes": [
+        { "id": "p", "type": "perlin", "params": { "seed": 7, "frequency": 3.0 } },
+        { "id": "mask", "type": "slopemask", "params": {
+          "low": 20.0, "high": 60.0, "heightScale": 100.0, "cellSize": 2.0
+        } }
+      ],
+      "connections": [ { "from": "p", "to": "mask", "input": 0 } ]
+    }
+    """
+    guard let g = theia.graph_create() else { h.expect(false, "create"); return }
+    defer { theia.graph_destroy(g) }
+    h.expect(theia.graph_load_json_text(g, json), "load: \(graphError(g))")
+    // cellSize 2.0 over 95 intervals is a 190-unit world; reproducing it keeps
+    // the document rendering exactly as it did at its own declared grid.
+    h.expect(theia.graph_param_value(g, "mask", "terrainSize", -1) == 190.0,
+             "legacy cellSize should migrate to an equivalent terrainSize")
+    h.expect(theia.graph_param_value(g, "mask", "cellSize", -1) == -1,
+             "legacy cellSize should not survive migration")
+}
+
 h.test("Legacy slope mask defaults migrate to preview-safe values") {
     guard let g = theia.graph_create() else { h.expect(false, "create failed"); return }
     defer { theia.graph_destroy(g) }
@@ -2424,6 +2535,54 @@ h.test("Material example remaps centered ridge data and preserves distinct regio
              "example should contain slope, river, and ridge regions: \(visible)")
 }
 
+h.test("Material example keeps every layer visible at each export resolution") {
+    // The single-resolution check above passed while the shipped example
+    // rendered an entirely empty slope channel at 512 and 1024, because slope
+    // spacing tracked the grid. Every resolution an author can actually export
+    // is now covered.
+    guard let g = theia.graph_create() else { h.expect(false, "create failed"); return }
+    defer { theia.graph_destroy(g) }
+    h.expect(theia.graph_load_json_file(g, "examples/material-stack.json"),
+             "load material example: \(graphError(g))")
+    let names = ["base", "slope", "river", "ridge"]
+    var coverageByChannel = [[Double]](repeating: [], count: 4)
+    for size in [128, 256, 512, 1024] {
+        let count = size * size
+        var weights = [Float](repeating: 0, count: count * 4)
+        let result = weights.withUnsafeMutableBufferPointer {
+            theia.graph_evaluate_material_stack(g, UInt32(size), UInt32(size),
+                                                 nil, 0, $0.baseAddress, $0.count)
+        }
+        h.expect(result.ok, "material example at \(size): \(graphError(g))")
+        var visible = [Int](repeating: 0, count: 4)
+        for texel in 0..<count {
+            var sum: Float = 0
+            for channel in 0..<4 {
+                let weight = weights[texel * 4 + channel]
+                sum += weight
+                if weight >= 0.10 { visible[channel] += 1 }
+            }
+            if texel % 997 == 0 {
+                h.expect(abs(sum - 1) < 1e-5,
+                         "weights must stay normalized at \(size): \(sum)")
+            }
+        }
+        for channel in 0..<4 {
+            let coverage = Double(visible[channel]) / Double(count)
+            h.expect(coverage > 0.01,
+                     "\(names[channel]) layer vanished at \(size): \(coverage)")
+            coverageByChannel[channel].append(coverage)
+        }
+    }
+    // The slope layer is the one that silently died; hold it to a bounded
+    // drift so a units regression cannot pass by only shrinking it.
+    let slope = coverageByChannel[1]
+    let low = slope.min() ?? 0
+    let high = slope.max() ?? 0
+    h.expect(low > 0 && high / low < 2.0,
+             "slope layer coverage drifted with resolution: \(slope)")
+}
+
 h.test("Material weights clamp extreme data and reject non-finite source samples") {
     let source = materialStackGraphJSON(overlayCount: 1,
                                         sourceNode: "d", sourceOutput: "field")
@@ -3655,6 +3814,322 @@ h.test("CLI JSON commands are parseable and unknown options exit 2") {
 
     let bad = runCLI(["nodes", "--bogus"])
     h.expect(bad.0 == 2, "unknown option should exit 2, got \(bad.0)")
+}
+
+
+// ---------------------------------------------------------------------------
+// Fluvial landscape evolution.
+// See docs/research/fluvial-landscape-evolution-notes.md for the audited
+// equations and the invariant table these tests discharge.
+// ---------------------------------------------------------------------------
+
+func fluvialGraphJSON(size: Int = 128, overrides: String = "") -> String {
+    """
+    {
+      "resolution": { "width": \(size), "height": \(size) },
+      "sink": "ero",
+      "sinkOutput": "height",
+      "nodes": [
+        { "id": "base", "type": "perlin", "params": {
+          "seed": 2024, "octaves": 6, "frequency": 3.0,
+          "lacunarity": 2.0, "gain": 0.5
+        } },
+        { "id": "ero", "type": "fluvial", "params": {
+          "iterations": 24, "terrainSize": 1024.0, "heightScale": 100.0
+          \(overrides.isEmpty ? "" : ", " + overrides)
+        } }
+      ],
+      "connections": [
+        { "from": "base", "output": "height", "to": "ero", "input": 0 }
+      ]
+    }
+    """
+}
+
+h.test("Fluvial node is registered and exposes stream power defaults") {
+    guard let g = theia.graph_create() else { h.expect(false, "create"); return }
+    defer { theia.graph_destroy(g) }
+    h.expect(theia.graph_add_node(g, "f", "fluvial"), "fluvial should be registered")
+    // m = 0.5 with n = 1 is the specific-stream-power case in Whipple & Tucker.
+    h.expect(theia.graph_param_value(g, "f", "areaExponent", -1) == 0.5,
+             "areaExponent default should be 0.5")
+    h.expect(theia.graph_param_value(g, "f", "slopeExponent", -1) == 1.0,
+             "slopeExponent default should be 1.0")
+    // Uniform uplift drives the surface to the model's own steady state and
+    // erases the authored input, so it must stay opt-in.
+    h.expect(theia.graph_param_value(g, "f", "uplift", -1) == 0.0,
+             "uplift must default to zero")
+}
+
+h.test("Fluvial erosion is finite, bounded, deterministic, and not an identity") {
+    let json = fluvialGraphJSON()
+    let base = evalGraphHeightsJSON(json, sink: "base", size: 128)
+    let eroded = evalGraphHeightsJSON(json, sink: "ero", size: 128)
+    let repeated = evalGraphHeightsJSON(json, sink: "ero", size: 128)
+    h.expect(eroded.allSatisfy { $0.isFinite && $0 >= 0 && $0 <= 1 },
+             "fluvial output left [0,1] or went non-finite")
+    h.expect(eroded == repeated, "fluvial must be bitwise deterministic")
+    h.expect(meanAbsoluteDifference(base, eroded) > 0.001,
+             "fluvial erosion must change the terrain")
+}
+
+h.test("Fluvial flow accumulation forms a channel hierarchy") {
+    // The property that distinguishes a drainage network from roughened noise:
+    // accumulated area is heavy-tailed, concentrated into a few channels rather
+    // than spread evenly. The previous `hydraulic` node cannot satisfy this
+    // because it has no notion of upstream area at all.
+    let flow = evalGraphHeightsJSON(fluvialGraphJSON(), sink: "ero", size: 128)
+    guard let g = theia.graph_create() else { h.expect(false, "create"); return }
+    defer { theia.graph_destroy(g) }
+    h.expect(theia.graph_load_json_text(g, fluvialGraphJSON()), "load: \(graphError(g))")
+    var values = [Float](repeating: 0, count: 128 * 128)
+    let r = values.withUnsafeMutableBufferPointer {
+        theia.graph_evaluate_heights_output(g, "ero", "flow", 128, 128,
+                                            $0.baseAddress, $0.count)
+    }
+    h.expect(r.ok, "flow output: \(graphError(g))")
+    h.expect(values.allSatisfy { $0.isFinite && $0 >= 0 && $0 <= 1 },
+             "flow output must be a normalized field")
+    _ = flow
+
+    let sorted = values.sorted()
+    let median = sorted[sorted.count / 2]
+    let p99 = sorted[Int(Double(sorted.count) * 0.99)]
+    h.expect(p99 > median * 1.5 + 0.05,
+             "flow field is not heavy-tailed: median \(median) p99 \(p99)")
+    let channels = values.filter { $0 > 0.75 }.count
+    h.expect(channels > 0 && channels < values.count / 8,
+             "channels should be present but sparse: \(channels)")
+}
+
+h.test("Fluvial deposition responds to the G coefficient") {
+    let detachment = evalGraphHeightsJSON(
+        fluvialGraphJSON(overrides: "\"deposition\": 0.0"), sink: "ero", size: 128)
+    let transport = evalGraphHeightsJSON(
+        fluvialGraphJSON(overrides: "\"deposition\": 4.0"), sink: "ero", size: 128)
+    h.expect(detachment.allSatisfy { $0.isFinite }, "G=0 output must be finite")
+    h.expect(transport.allSatisfy { $0.isFinite }, "G=4 output must be finite")
+    // Deposition returns eroded material to the bed, so a transport-limited run
+    // must retain more mass than a purely detachment-limited one.
+    let detachedMean = detachment.reduce(0, +) / Float(detachment.count)
+    let transportMean = transport.reduce(0, +) / Float(transport.count)
+    h.expect(transportMean > detachedMean,
+             "deposition should retain mass: \(detachedMean) vs \(transportMean)")
+}
+
+// Spikes and local minima, counted separately. `isolatedExtremaCount` cannot be
+// reused here: it treats any cell separated from its four orthogonal neighbours
+// as an artifact, which for an incision model also matches the bottom of a
+// legitimate one-cell-wide diagonal channel. Carving those channels is the
+// node's purpose, so the meaningful invariants are that spikes do not appear
+// and that drainage connectivity does not degrade.
+func spikePeakCount(_ values: [Float], size: Int, threshold: Float) -> Int {
+    guard values.count == size * size, size >= 3 else { return .max }
+    var count = 0
+    for y in 1..<(size - 1) {
+        for x in 1..<(size - 1) {
+            let i = y * size + x
+            let neighbors = [values[i - 1], values[i + 1],
+                             values[i - size], values[i + size]]
+            if values[i] > (neighbors.max() ?? values[i]),
+               neighbors.allSatisfy({ abs(values[i] - $0) > threshold }) {
+                count += 1
+            }
+        }
+    }
+    return count
+}
+
+// Cells with no lower neighbour in any of the eight directions: water arriving
+// here has nowhere to go. This is the direct measure of the flow-path
+// monotonicity invariant in the research note.
+func undrainedCellCount(_ values: [Float], size: Int) -> Int {
+    guard values.count == size * size, size >= 3 else { return .max }
+    var count = 0
+    for y in 1..<(size - 1) {
+        for x in 1..<(size - 1) {
+            let here = values[y * size + x]
+            var lowest = Float.infinity
+            for dy in -1...1 {
+                for dx in -1...1 where dx != 0 || dy != 0 {
+                    lowest = min(lowest, values[(y + dy) * size + (x + dx)])
+                }
+            }
+            if lowest > here { count += 1 }
+        }
+    }
+    return count
+}
+
+h.test("Fluvial erosion removes spikes and improves drainage connectivity") {
+    let json = fluvialGraphJSON()
+    let base = evalGraphHeightsJSON(json, sink: "base", size: 128)
+    let eroded = evalGraphHeightsJSON(json, sink: "ero", size: 128)
+
+    // The Courant limit and the receiver clamp exist to prevent the
+    // spike/checkerboard mode of explicit erosion schemes. A correct run
+    // should strictly reduce spikes rather than merely avoid adding them.
+    let basePeaks = spikePeakCount(base, size: 128, threshold: 0.003)
+    let erodedPeaks = spikePeakCount(eroded, size: 128, threshold: 0.003)
+    h.expect(erodedPeaks <= basePeaks,
+             "fluvial created spikes \(basePeaks) -> \(erodedPeaks)")
+
+    // Depression routing should leave the surface better drained than it found
+    // it; a rise here would mean the solver was manufacturing closed basins.
+    let baseUndrained = undrainedCellCount(base, size: 128)
+    let erodedUndrained = undrainedCellCount(eroded, size: 128)
+    h.expect(erodedUndrained <= baseUndrained,
+             "fluvial worsened drainage \(baseUndrained) -> \(erodedUndrained)")
+}
+
+h.test("Fluvial channel structure is stable across resolutions") {
+    // terrainSize is fixed, so the same physical terrain is being sampled more
+    // finely. Channel density may sharpen but must not collapse or explode.
+    var densities: [Double] = []
+    for size in [128, 256] {
+        guard let g = theia.graph_create() else { h.expect(false, "create"); return }
+        defer { theia.graph_destroy(g) }
+        h.expect(theia.graph_load_json_text(g, fluvialGraphJSON(size: size)),
+                 "load at \(size): \(graphError(g))")
+        var values = [Float](repeating: 0, count: size * size)
+        let r = values.withUnsafeMutableBufferPointer {
+            theia.graph_evaluate_heights_output(g, "ero", "flow",
+                                                UInt32(size), UInt32(size),
+                                                $0.baseAddress, $0.count)
+        }
+        h.expect(r.ok, "flow at \(size): \(graphError(g))")
+        let channels = values.filter { $0 > 0.75 }.count
+        densities.append(Double(channels) / Double(values.count))
+    }
+    let low = densities.min() ?? 0
+    let high = densities.max() ?? 0
+    h.expect(low > 0.0005 && high / max(low, 1e-9) < 6.0,
+             "channel density drifted with resolution: \(densities)")
+}
+
+h.test("Hillslope diffusion smooths grid-scale roughness") {
+    // Fluvial incision alone is scale-free: it cuts a channel at one-cell
+    // drainage area, packing the surface with grid-scale grooves. Diffusion is
+    // the term that suppresses exactly that, so the measurement is grid-scale
+    // curvature of the SURFACE. The `flow` output cannot be used here: it is
+    // log-normalized against its own range, so rescaling hides the effect.
+    @MainActor func gridScaleRoughness(_ diffusion: Double) -> Float {
+        let eroded = evalGraphHeightsJSON(
+            fluvialGraphJSON(overrides: "\"diffusion\": \(diffusion)"),
+            sink: "ero", size: 128)
+        guard eroded.count == 128 * 128 else { return -1 }
+        return curvaturePercentile(eroded, size: 128, percentile: 0.90)
+    }
+    let none = gridScaleRoughness(0.0)
+    let smoothed = gridScaleRoughness(4.0)
+    h.expect(none >= 0 && smoothed >= 0, "diffusion fixtures must evaluate")
+    h.expect(smoothed < none * 0.75,
+             "diffusion should smooth grid-scale relief: \(none) -> \(smoothed)")
+
+    // The substepping exists to hold the explicit five-point scheme inside its
+    // stability limit; the largest allowed coefficient must stay well-posed.
+    let extreme = evalGraphHeightsJSON(
+        fluvialGraphJSON(overrides: "\"diffusion\": 8.0"), sink: "ero", size: 128)
+    h.expect(extreme.allSatisfy { $0.isFinite && $0 >= 0 && $0 <= 1 },
+             "maximum diffusion must remain stable and bounded")
+}
+
+h.test("Nonlinear hillslope transport concentrates smoothing on steep ground") {
+    // Roering et al. 1999: transport diverges as the gradient approaches Sc.
+    // The point of the nonlinear law is selectivity -- at a coefficient that
+    // suppresses grid-scale grooves it must flatten far LESS of the surface
+    // than linear diffusion did, or it buys nothing over the old term.
+    @MainActor func measure(_ overrides: String) -> (flat: Double, rough: Float) {
+        let eroded = evalGraphHeightsJSON(fluvialGraphJSON(overrides: overrides),
+                                          sink: "ero", size: 128)
+        guard eroded.count == 128 * 128 else { return (-1, -1) }
+        var flatCount = 0
+        for y in 1..<127 {
+            for x in 1..<127 {
+                let i = y * 128 + x
+                let lap = abs(eroded[i-1] + eroded[i+1] + eroded[i-128]
+                              + eroded[i+128] - 4 * eroded[i])
+                if lap < 0.0002 { flatCount += 1 }
+            }
+        }
+        return (Double(flatCount) / Double(126 * 126),
+                curvaturePercentile(eroded, size: 128, percentile: 0.90))
+    }
+    let off = measure("\"diffusion\": 0.0")
+    let tuned = measure("\"diffusion\": 0.02, \"criticalSlope\": 0.6")
+    h.expect(off.rough >= 0 && tuned.rough >= 0, "transport fixtures must evaluate")
+
+    // Grooves must still be suppressed relative to no transport. The margin is
+    // deliberately loose: the diffusion number scales as 1/cell^2, so at this
+    // 128 test grid the same coefficient is ~16x weaker than at the 512 the
+    // default is tuned for. Direction is the contract here, not magnitude.
+    h.expect(tuned.rough < off.rough,
+             "nonlinear transport should still smooth grooves: \(off.rough) -> \(tuned.rough)")
+    let strong = measure("\"diffusion\": 0.2, \"criticalSlope\": 0.6")
+    h.expect(strong.rough < tuned.rough,
+             "raising the coefficient must increase smoothing: \(tuned.rough) -> \(strong.rough)")
+    // ...without flattening the surface the way the linear term did.
+    h.expect(tuned.flat < 0.25,
+             "nonlinear transport flattened too much of the surface: \(tuned.flat)")
+
+    // A lower critical slope makes the law fire at gentler gradients, so it
+    // must smooth strictly more. This is what proves Sc is actually wired in.
+    let sharper = measure("\"diffusion\": 0.02, \"criticalSlope\": 0.3")
+    h.expect(sharper.rough < tuned.rough,
+             "lowering criticalSlope should increase smoothing: \(tuned.rough) -> \(sharper.rough)")
+
+    // The substep budget is sized for the amplification cap; the maximum
+    // coefficient must stay well-posed.
+    let extreme = evalGraphHeightsJSON(
+        fluvialGraphJSON(overrides: "\"diffusion\": 0.5, \"criticalSlope\": 0.1"),
+        sink: "ero", size: 128)
+    h.expect(extreme.allSatisfy { $0.isFinite && $0 >= 0 && $0 <= 1 },
+             "maximum nonlinear transport must remain stable and bounded")
+}
+
+h.test("Legacy linear diffusion values migrate to the nonlinear law") {
+    // A pre-Roering graph carries `diffusion` but no `criticalSlope`. Loading
+    // it unchanged would apply a ~10x stronger law and flatten the terrain.
+    let legacy = """
+    {
+      "resolution": { "width": 128, "height": 128 },
+      "sink": "ero",
+      "nodes": [
+        { "id": "p", "type": "perlin", "params": { "seed": 5 } },
+        { "id": "ero", "type": "fluvial", "params": { "diffusion": 0.8 } }
+      ],
+      "connections": [ { "from": "p", "to": "ero", "input": 0 } ]
+    }
+    """
+    guard let g = theia.graph_create() else { h.expect(false, "create"); return }
+    defer { theia.graph_destroy(g) }
+    h.expect(theia.graph_load_json_text(g, legacy), "load: \(graphError(g))")
+    h.expect(abs(theia.graph_param_value(g, "ero", "diffusion", -1) - 0.08) < 1e-9,
+             "legacy diffusion should rescale for the nonlinear law")
+
+    // A graph already authored against the new law must not be rescaled again.
+    let modern = legacy.replacingOccurrences(
+        of: "\"diffusion\": 0.8",
+        with: "\"diffusion\": 0.02, \"criticalSlope\": 0.6")
+    guard let g2 = theia.graph_create() else { h.expect(false, "create"); return }
+    defer { theia.graph_destroy(g2) }
+    h.expect(theia.graph_load_json_text(g2, modern), "load modern: \(graphError(g2))")
+    h.expect(abs(theia.graph_param_value(g2, "ero", "diffusion", -1) - 0.02) < 1e-9,
+             "a graph with criticalSlope must not be migrated twice")
+}
+
+h.test("Fluvial rejects non-finite parameters") {
+    for name in ["erodibility", "dt", "deposition", "terrainSize", "uplift",
+                 "diffusion", "mfdExponent", "areaExponent", "criticalSlope"] {
+        guard let g = theia.graph_create() else { h.expect(false, "create"); return }
+        defer { theia.graph_destroy(g) }
+        h.expect(theia.graph_load_json_text(g, fluvialGraphJSON()),
+                 "load: \(graphError(g))")
+        h.expect(theia.graph_set_param(g, "ero", name, Double.nan),
+                 "set \(name) to NaN")
+        let r = theia.graph_evaluate(g, "ero", 64, 64, nil, nil)
+        h.expect(!r.ok, "non-finite \(name) should fail evaluation")
+    }
 }
 
 print("\n\(h.checks) checks, \(h.failures) failure(s)")

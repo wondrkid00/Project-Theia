@@ -1,9 +1,11 @@
 {
+  "formatVersion": 3,
   "resolution": {
     "width": 512,
     "height": 512
   },
-  "sink": "terrace",
+  "sink": "scree",
+  "sinkOutput": "height",
   "nodes": [
     {
       "id": "base",
@@ -11,13 +13,14 @@
       "params": {
         "seed": 2024,
         "octaves": 7,
-        "frequency": 4.0,
+        "frequency": 3.0,
         "lacunarity": 2.0,
-        "gain": 0.5
+        "gain": 0.5,
+        "heightScale": 1.0
       }
     },
     {
-      "id": "ero",
+      "id": "carve",
       "type": "fluvial",
       "params": {
         "iterations": 60,
@@ -37,49 +40,50 @@
       }
     },
     {
-      "id": "settle",
+      "id": "scree",
       "type": "thermal",
       "params": {
-        "iterations": 50,
+        "iterations": 40,
         "talusAngle": 34.0,
         "strength": 0.5,
-        "heightScale": 80.0
-      }
-    },
-    {
-      "id": "norm",
-      "type": "normalize",
-      "params": {}
-    },
-    {
-      "id": "terrace",
-      "type": "terrace",
-      "params": {
-        "steps": 12,
-        "sharpness": 4.0
+        "terrainSize": 1024.0,
+        "heightScale": 100.0
       }
     }
   ],
   "connections": [
     {
       "from": "base",
-      "to": "ero",
+      "output": "height",
+      "to": "carve",
       "input": 0
     },
     {
-      "from": "ero",
-      "to": "settle",
-      "input": 0
-    },
-    {
-      "from": "settle",
-      "to": "norm",
-      "input": 0
-    },
-    {
-      "from": "norm",
-      "to": "terrace",
+      "from": "carve",
+      "output": "height",
+      "to": "scree",
       "input": 0
     }
-  ]
+  ],
+  "ui": {
+    "preview": {
+      "displayMode": "terrain",
+      "materialPreset": "natural",
+      "maskOpacity": 0.65
+    },
+    "positions": {
+      "base": {
+        "x": 80,
+        "y": 180
+      },
+      "carve": {
+        "x": 340,
+        "y": 180
+      },
+      "scree": {
+        "x": 600,
+        "y": 180
+      }
+    }
+  }
 }
