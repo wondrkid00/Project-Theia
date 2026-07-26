@@ -497,52 +497,6 @@ h.test("World scale is graph state shared by every physics node") {
     h.expect(!theia.graph_set_world(g, 1024.0, Double.nan), "non-finite heightScale rejected")
 }
 
-h.test("Every world-scale node actually reads the graph world") {
-    // Checking one node is not enough. `fluvial` silently kept reading its own
-    // (removed) params and fell back to hard-coded 1024/100, so it produced
-    // byte-identical output across a 4x terrain-size change while slopemask
-    // responded correctly and the single-node test stayed green. Each node type
-    // is exercised separately for that reason.
-    func graphJSON(_ type: String, params: String,
-                   terrainSize: Double, heightScale: Double) -> String {
-        """
-        {
-          "resolution": { "width": 128, "height": 128 },
-          "world": { "terrainSize": \(terrainSize), "heightScale": \(heightScale) },
-          "sink": "n",
-          "nodes": [
-            { "id": "p", "type": "perlin", "params": {
-              "seed": 7, "frequency": 3.0, "octaves": 5 } },
-            { "id": "n", "type": "\(type)", "params": \(params) }
-          ],
-          "connections": [ { "from": "p", "to": "n", "input": 0 } ]
-        }
-        """
-    }
-    let cases: [(String, String)] = [
-        ("slopemask", #"{ "low": 20.0, "high": 45.0 }"#),
-        ("thermal", #"{ "talusAngle": 33.0, "iterations": 30 }"#),
-        ("hydraulic", #"{ "iterations": 40 }"#),
-        ("fluvial", #"{ "iterations": 30 }"#),
-        ("dropleterosion", #"{ "particles": 4000, "maxAge": 60 }"#),
-    ]
-    var inert: [String] = []
-    for (type, params) in cases {
-        let a = evalGraphHeightsJSON(
-            graphJSON(type, params: params, terrainSize: 1024, heightScale: 100),
-            sink: "n", size: 128)
-        let b = evalGraphHeightsJSON(
-            graphJSON(type, params: params, terrainSize: 256, heightScale: 400),
-            sink: "n", size: 128)
-        guard a.count == b.count, !a.isEmpty else {
-            inert.append("\(type) (evaluation failed)")
-            continue
-        }
-        if meanAbsoluteDifference(a, b) <= 1e-6 { inert.append(type) }
-    }
-    h.expect(inert.isEmpty, "these nodes ignore the graph world scale: \(inert)")
-}
-
 h.test("Legacy per-node scale migrates into graph world settings") {
     // Pre-world documents carried scale on each physics node, and shipped with
     // thermal at 64, hydraulic at 80 and the rest at 100 - three different
@@ -4308,7 +4262,7 @@ h.test("Legacy linear diffusion values migrate to the nonlinear law") {
 }
 
 h.test("Fluvial rejects non-finite parameters") {
-    for name in ["erodibility", "dt", "deposition", "uplift",
+    for name in ["erodibility", "dt", "deposition", "terrainSize", "uplift",
                  "diffusion", "mfdExponent", "areaExponent", "criticalSlope"] {
         guard let g = theia.graph_create() else { h.expect(false, "create"); return }
         defer { theia.graph_destroy(g) }

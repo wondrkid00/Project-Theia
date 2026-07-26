@@ -70,13 +70,6 @@ struct NodeParameterInspector: View {
                     value: model.document.world.heightScale,
                     range: 1...4096, step: 1, precision: 0
                 ) { model.setWorld(heightScale: $0) }
-                if !model.previewUsesWorldScale {
-                    Label("Nothing upstream of the previewed output uses terrain scale, so these have no visible effect here.",
-                          systemImage: "info.circle")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
                 Divider().opacity(0.45)
             }
 

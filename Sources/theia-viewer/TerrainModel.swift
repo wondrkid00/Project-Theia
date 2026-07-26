@@ -548,26 +548,6 @@ final class TerrainModel: ObservableObject {
             ? nil : document.materialStackValidationMessage()
     }
 
-    /// True when nothing between the previewed output and the graph inputs
-    /// consumes world scale -- a pure noise or arithmetic chain. Editing terrain
-    /// scale then correctly changes nothing, which reads as a broken control
-    /// unless the UI says so.
-    var previewUsesWorldScale: Bool {
-        let reference = activeOutputReference
-        guard !reference.node.isEmpty else { return false }
-        var seen = Set<String>()
-        var stack = [reference.node]
-        while let id = stack.popLast() {
-            guard seen.insert(id).inserted else { continue }
-            guard let node = document.node(id: id) else { continue }
-            if GraphDocument.worldScaleNodeTypes.contains(node.type) { return true }
-            for connection in document.connections where connection.to == id {
-                stack.append(connection.from)
-            }
-        }
-        return false
-    }
-
     /// Graph-level terrain scale. Every physics node reads this, so a change
     /// invalidates the whole cache rather than one node's.
     func setWorld(terrainSize: Double? = nil, heightScale: Double? = nil) {

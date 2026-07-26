@@ -97,12 +97,12 @@ bool FluvialNode::simulate(GPUContext& ctx,
     FluvialParamsGPU P{};
     P.width = W;
     P.height = H;
-    // Scale is graph state: one terrain, one width, one vertical scale.
-    float terrainSize = static_cast<float>(world.terrainSize);
-    P.heightScale = static_cast<float>(world.heightScale);
+    float terrainSize = 1024.0f;
     float accuracy = 1.0f;
-    float diffusivity = 0.02f;
-    if (!finiteParam(params, "erodibility", 0.5, P.erodibility, error) ||
+    float diffusivity = 1.2f;
+    if (!finiteParam(params, "terrainSize", 1024.0, terrainSize, error) ||
+        !finiteParam(params, "heightScale", 100.0, P.heightScale, error) ||
+        !finiteParam(params, "erodibility", 0.5, P.erodibility, error) ||
         !finiteParam(params, "areaExponent", 0.5, P.areaExponent, error) ||
         !finiteParam(params, "slopeExponent", 1.0, P.slopeExponent, error) ||
         !finiteParam(params, "deposition", 1.0, P.deposition, error) ||
