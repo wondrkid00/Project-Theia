@@ -1,222 +1,124 @@
 # Theia
 
-**Current version:** `0.11.0-alpha.2`
+### Shape worlds. Build them node by node.
 
-A node-based procedural terrain generator for macOS, built on Metal compute —
-a Mac-native take on tools like GAEA and World Machine (which are Windows-only).
+Theia is a native terrain studio for macOS. It turns procedural ideas into
+landscapes through a visual node graph—generate mountains, carve rivers, shape
+slopes, paint material regions, and export the result for your engine.
 
-Terrain is built as a graph of operations on a heightfield: generate base noise,
-carve it with hydraulic and thermal erosion, then shape it with filters. All the
-heavy work runs as Metal compute kernels on the GPU.
+Built for Apple Silicon and powered by Metal, Theia keeps terrain creation fast,
+interactive, and entirely on your Mac.
 
-> **Status:** headless core engine + CLI + macOS 3D viewer/node editor with
-> typed multi-output fields, semantic material layer stacks, and
-> terrain/mask/data/material preview modes.
+> **Theia is currently in alpha.** The editor and core workflow are usable, but
+> project files and features may continue to evolve.
 
-## Requirements
+## Create landscapes, not pipelines
 
-- macOS on Apple Silicon (developed on M4, Metal 4)
-- Swift 6 toolchain — **Command Line Tools is enough, full Xcode not required**
+Theia brings the essential terrain workflow into one focused tool:
 
-No external package dependencies to fetch: Metal access (metal-cpp), JSON
-(nlohmann/json) and PNG (stb_image_write) are vendored under
-`Sources/TheiaCore/third_party/`.
+- **Build with nodes** — combine generators, filters, erosion, rivers, masks,
+  and transforms without locking your terrain into a single recipe.
+- **Shape with natural processes** — use hydraulic, thermal, droplet, and
+  fluvial erosion to create landforms with believable structure.
+- **See every output** — preview terrain, masks, analysis data, normals, slopes,
+  and material blends in the 3D viewport.
+- **Author material regions** — layer masks and data into export-ready material
+  weights with predictable channel assignments.
+- **Export clean assets** — write 16-bit heightmaps, RAW terrain data, PFM
+  fields, OBJ meshes, and RGBA material weights.
 
-## Build & run
+```text
+Build a graph  →  Shape the terrain  →  Preview the world  →  Export
+```
+
+## Start creating
+
+Theia requires macOS 14 or newer, Apple Silicon, and the Swift 6 toolchain.
+Command Line Tools are enough; full Xcode is not required.
 
 ```sh
+# Build Theia
 swift build
 
-# Sanity-check the GPU compute path
-swift run theia-cli smoke
-
-# Print version/API details and check local capabilities
-swift run theia-cli version
-swift run theia-cli doctor
-
-# Generate fBm Perlin noise
-swift run theia-cli demo --size 1024 --out terrain.png
-
-# Evaluate a node graph (writes a 16-bit PNG + a 32-bit float PFM)
-swift run theia-cli run examples/showcase.json --size 1024 --out terrain.png
-
-# Try the experimental point-local gully erosion filter
-swift run theia-cli run examples/erosion-filter.json --size 1024 --out gullies.png
-
-# Evaluate or export its named ridge analysis output
-swift run theia-cli run examples/erosion-filter.json \
-  --output ridge --size 1024 --out ridges.png
-swift run theia-cli export examples/erosion-filter.json \
-  --output ridge --heightmap r16 --mesh none \
-  --out-dir /private/tmp/theia-ridge
-
-# List node types, optionally as parseable JSON
-swift run theia-cli nodes
-swift run theia-cli nodes --json
-
-# Diagnose graph authoring health
-swift run theia-cli diagnose examples/foundation.json
-swift run theia-cli diagnose examples/foundation.json --json
-
-# Export engine-ready assets
-swift run theia-cli export examples/foundation.json \
-  --size 256 \
-  --out-dir /private/tmp/theia-export \
-  --basename foundation \
-  --heightmap png16 \
-  --mesh obj
-
-# Export a terrain + exact-sum RGBA8 material-weight bundle
-swift run theia-cli export-material examples/material-stack.json \
-  --size 1024 \
-  --out-dir /private/tmp/theia-material \
-  --basename landscape \
-  --heightmap r16 \
-  --mesh obj
-
-# Run the test suite
-swift run theia-tests
-
-# Run headless viewer authoring/persistence/picking checks
-swift run theia-viewer --self-test
+# Open the node editor with an example landscape
+swift run theia-viewer examples/showcase.json
 ```
 
-The `demo` and `run` commands write a 16-bit grayscale PNG preview and a `.pfm`
-lossless float heightmap next to it.
-
-CLI global flags are available on every command: `--help`, `--version`,
-`--json`, `--quiet`, `--no-color`, and `--verbose`. Unknown options return exit
-code `2` instead of being ignored. Runtime/load/evaluation/export failures
-return exit code `1`.
-
-Export supports the main engine-facing formats:
+Try a material-layer workflow:
 
 ```sh
-# Heightmap formats: png16, r16, pfm32, none
-# Mesh formats: obj, none
-swift run theia-cli export examples/foundation.json \
-  --heightmap r16 --mesh obj --out-dir /private/tmp/theia-export
+swift run theia-viewer examples/material-stack.json
 ```
 
-The legacy Phase 6 `--maps height,pfm,normal,slope,mask` flag remains accepted
-as a compatibility alias, but new scripts should prefer `--heightmap` and
-`--mesh`.
+Or generate terrain without opening the editor:
 
-The viewer can display the previewed named output as shaded terrain, height, mask,
-data, slope, normal, or material preview. In `auto` mode the renderer follows
-the resolved `FieldKind`: mask outputs use an overlay and data outputs use a
-diverging ramp centered at `0.5`. Non-terrain fields use a sibling terrain
-output as geometry when available, then fall back to the nearest upstream
-terrain.
-Node and port selection is preview-only: it does not dirty the document or
-change CLI/export behavior. Use **Set as Graph Output** to update the persisted
-`sink`/`sinkOutput` explicitly.
+```sh
+swift run theia-cli run examples/showcase.json \
+  --size 1024 \
+  --out terrain.png
+```
 
-Graph format v3 can store one semantic `materialStack`: a terrain reference,
-one base/fallback color, and up to three overlay sources resolved as `mask` or
-`data`. The viewer's global Material Layers panel authors channel order,
-sources, names, and sRGB preview colors. **Add Overlay** requires an explicit
-source choice and offers unused outputs first; duplicate sources remain an
-explicit advanced choice. A centered `data` field such as
-`erosionfilter.ridge` should pass through a `remap` node before it is used as
-coverage (`0.5` is otherwise 50% coverage). Preview colors are decoded to linear
-light before a convex weight blend; color-only edits update shader uniforms
-without reevaluating the graph or rebuilding preview buffers. Scalar outputs
-and packed weights are cached, while rapid layer edits are coalesced by the
-preview worker. Deleting a referenced source clears that layer's source without
-reordering its public RGBA channel; the stack remains repairable, while material
-preview/export stay blocked until a valid source is chosen. `export-material`
-writes the terrain artifact,
-optional OBJ, linear `<basename>_weights.png` (`RGBA8`, every texel sums to
-`255`), and a channel/source manifest.
-When a mask preview is active, the viewport exposes an erase brush for hiding
-unwanted mask strokes. Select an active mask output, click `Erase` in the top toolbar (or
-press `E`), then drag over the terrain; brush radius and `Clear` remain available
-in viewport settings. Those edits are saved per node/output in `ui.maskErases`, consumed by the
-core during graph evaluation, propagated to downstream nodes, and included in
-CLI/viewer exports. Other editor-only `ui` metadata remains non-semantic.
-The brush is disabled for composite material preview, so it can never alter the
-terrain/weight buffers accidentally; use **Inspect Source** to edit a mask.
+## Explore the examples
 
-Viewport navigation follows common 3D editor conventions: left-drag orbits,
-Shift-left-drag / middle-drag / right-drag pans, wheel or pinch zooms,
-Option-right-drag dollies, and focused viewport keys `F` and `7`
-reset the camera or snap to top view. Keys `O`, `H`, and `Z` select orbit, pan, and
-zoom left-drag tools; `E` toggles the active mask eraser; `G`, `A`, and `W` toggle
-grid, axes, and wireframe. The
-viewport has a Godot-style top toolbar with icon-only frame/orbit/pan/zoom
-controls, grid/axis/wireframe toggles, compact projection/display/material
-menus, and a camera-aware axis gizmo for snapping to X/Y/Z views.
+The [`examples`](examples) directory includes ready-made graphs for:
 
-## Node types
+- foundational terrain generation
+- hydraulic and thermal erosion
+- particle hydrology and river carving
+- fluvial landscape evolution
+- masks and typed analysis outputs
+- layered terrain materials
 
-| type        | inputs | description                                              |
-|-------------|:------:|----------------------------------------------------------|
-| `perlin`    |   0    | fBm Perlin noise (seed, octaves, frequency, lacunarity, gain) |
-| `ridged`    |   0    | ridged multifractal-style fBm generator                       |
-| `hydraulic` |   1    | stable GPU hydraulic erosion with virtual-pipe flow, sediment transport, and conservative bank settling |
-| `dropleterosion` | 1 | deterministic particle hydrology with discharge/momentum feedback |
-| `erosionfilter` | 1 | point-local gully filter; outputs `height` terrain and `ridge` data |
-| `river` | 1 | terrain-traced river mask with seed, headwaters, water, and width controls |
-| `rivercarve` | 2 | carves terrain from an explicit river mask with depth/downcutting controls |
-| `thermal`   |   1    | thermal erosion (talus-angle relaxation)                 |
-| `terrace`   |   1    | quantize heights into stratified terraces                |
-| `normalize` |   1    | stretch the actual range to [0,1]                        |
-| `slopemask` |   1    | [0,1] mask from terrain slope angle                      |
-| `scalebias` |   1    | affine remap `clamp(in*scale + bias)`                    |
-| `combine`   |   2    | linear blend of two inputs                               |
-| `invert`    |   1    | crossfade between heightfield and inverse                 |
-| `clamp`     |   1    | clamp heights to a min/max band                           |
-| `remap`     |   1    | remap an input interval with gamma shaping                |
-| `blur`      |   1    | deterministic clamped-edge box blur                       |
-| `warp`      |   1    | domain-warp source sampling with procedural displacement  |
-| `blend`     |   2    | blend two inputs with mix/add/multiply/max/min/screen     |
+They are the fastest way to learn how Theia's nodes work together.
 
-See `examples/` for graph files.
+## Made for an open workflow
 
-## Architecture
+Theia separates the terrain engine from its tools:
 
-- **`TheiaCore`** — portable C++ engine. All Metal usage (via metal-cpp) is kept
-  behind private headers; the public API in `include/Theia/Theia.hpp` stays
-  Swift-safe so it bridges cleanly over Swift/C++ interop.
-- **`theia-cli`** — thin Swift shell over the core.
-- **Headless API** — `include/Theia/Theia.hpp` exposes version/capabilities,
-  diagnostics, node/default-param enumeration, graph evaluation, and structured
-  export through Swift-safe C++ entry points. This API is stable for SwiftPM
-  callers in this repo, but is not yet promised as a cross-language C ABI.
-- **Graph evaluation** is demand-driven from a sink with content-hash
-  memoization. A node evaluation atomically fills all of its outputs; downstream
-  content keys include the selected output name and kind, so switching ports
-  cannot reuse the wrong field.
-- **Graph format v3** adds an optional semantic material stack to the typed
-  named ports, `sinkOutput`, and output-scoped mask edits introduced by v2.
-  Format v1/v2 files migrate automatically and all legacy APIs continue to
-  select a node's default output.
-- **Shaders** are compiled from MSL source at runtime (the offline `metal`
-  compiler isn't available with Command Line Tools alone).
+- **TheiaCore** is the C++ graph and simulation engine.
+- **theia-viewer** is the native visual editor and 3D viewport.
+- **theia-cli** brings the same graph evaluation and export workflow to scripts
+  and build pipelines.
 
-## Roadmap
+Graphs are stored as readable JSON, so they can be versioned, inspected, and
+generated outside the editor. The same graph produces the same result in the
+viewer, CLI, and export pipeline.
 
-The core now has typed multi-output scalar fields, named-port persistence,
-atomic output caching, and a four-channel derived material-weight workflow.
-Next: texture/PBR integration, researched auto-biome classification, and
-separately researched physical simulations.
+For implementation details, see the
+[architecture overview](docs/architecture.md). Physically or mathematically
+based features are documented in the [research notes](docs/research/README.md).
 
-## Versioning
+## Useful commands
 
-Theia uses Semantic Versioning:
+```sh
+# Check your local setup
+swift run theia-cli doctor
 
-- `0.x` tracks active pre-1.0 development.
-- Minor versions map to larger project phases or milestone groups.
-- Patch versions are for fixes and focused UI/core polish.
-- Pre-release suffixes such as `-alpha.1` indicate builds that are useful for
-  testing but not yet a stable public release.
+# Discover available nodes
+swift run theia-cli nodes
+
+# Validate a graph
+swift run theia-cli diagnose examples/showcase.json
+
+# Run the regression suite
+swift run theia-tests
+```
+
+## Project status
+
+Current release: **0.12.0-alpha.1**
+
+Theia already supports a complete procedural terrain loop: node authoring,
+GPU-backed generation, erosion and river systems, typed multi-output fields,
+mask editing, semantic material layers, 3D preview, and engine-ready export.
+
+The next horizon is richer texture and PBR authoring, biome workflows, and new
+physically informed simulations.
 
 ## License
 
-Theia is licensed under the MIT License. See `LICENSE`. The experimental
-erosion-filter Metal kernel is available under MPL-2.0; see
-`THIRD-PARTY-NOTICES.md` for its source lineage and license link.
+Theia is available under the [MIT License](LICENSE).
 
-Third-party libraries vendored under `Sources/TheiaCore/third_party/` keep
-their own license files and notices.
+The experimental erosion-filter Metal kernel is available under MPL-2.0.
+Third-party attribution and license details are listed in
+[`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md).

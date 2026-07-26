@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+## 0.12.0-alpha.1
+
+- Added the `fluvial` landscape-evolution node with drainage-area-driven
+  stream-power incision, sediment deposition, nonlinear hillslope transport,
+  and a named flow-accumulation output.
+- Made slope-sensitive terrain processes use resolution-independent ground
+  spacing, keeping slope masks, thermal erosion, hydraulic erosion, and
+  material previews consistent across authoring and export resolutions.
+- Corrected nonlinear hillslope transport to operate in world units, restored
+  the intended critical-slope response, and bounded the explicit diffusion
+  step for stability.
+- Aligned parameter sliders and typed entry with the core's validated ranges,
+  including deterministic clamping and snapping.
+- Added fluvial and terrain-scale research audits, an example landscape graph,
+  and expanded core and viewer regression coverage.
+
 ## 0.11.0-alpha.2
 
 - Repaired the GPU hydraulic erosion solver with wet/dry velocity handling, a

@@ -31,7 +31,7 @@ using json = nlohmann::json;
 namespace theia {
 
 namespace {
-constexpr const char* kTheiaVersion = "0.11.0-alpha.2";
+constexpr const char* kTheiaVersion = "0.12.0-alpha.1";
 constexpr std::uint32_t kTheiaAPIVersion = 4;
 constexpr std::uint32_t kMaxMaterialDimension = 4096;
 

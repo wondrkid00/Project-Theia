@@ -87,7 +87,7 @@ private func statsObject(_ r: theia.GraphEvalResult) -> [String: Any] {
 
 private func usage() -> String {
     """
-    theia-cli 0.11.0-alpha.2
+    theia-cli 0.12.0-alpha.1
 
     USAGE:
       theia-cli [--json] [--quiet] [--no-color] [--verbose] COMMAND [ARGS]
