@@ -526,8 +526,12 @@ final class TerrainModel: ObservableObject {
                                                           output: port.name)
                     ?? port.declaredKind,
                 inheritInput: port.inheritInput,
-                isDefault: port.isDefault)
+                    isDefault: port.isDefault)
         }
+    }
+
+    func inputPorts(for nodeId: String) -> [GraphInputPort] {
+        document.inputPorts(nodeId: nodeId)
     }
 
     func isActiveOutput(nodeId: String, output: String) -> Bool {
@@ -691,6 +695,32 @@ final class TerrainModel: ObservableObject {
         selectedConnectionId = nil
         syncPreviewWithDocument(markDirty: true)
         reloadInspector()
+    }
+
+    @discardableResult
+    func addNode(type: String, at position: GraphNodePosition,
+                 connecting source: GraphOutputReference,
+                 to input: UInt32) -> Bool {
+        var next = document
+        let id = next.addNode(type: type, at: position)
+        let compatibility = next.connectionCompatibility(from: source,
+                                                         to: id,
+                                                         input: input)
+        guard compatibility.isAllowed else { return false }
+        next.connect(from: source.node, output: source.output,
+                     to: id, input: input)
+
+        pushUndo()
+        recordRecentNodeType(type)
+        document = next
+        previewReference = GraphOutputReference(
+            node: id, output: GraphDocument.defaultOutputName(for: type))
+        selectedNodeId = id
+        selectedNodeIds = [id]
+        selectedConnectionId = nil
+        syncPreviewWithDocument(markDirty: true)
+        reloadInspector()
+        return true
     }
 
     func addQuickStart(kind: String) {
@@ -859,28 +889,28 @@ final class TerrainModel: ObservableObject {
         return document.nodes.first { !ids.contains($0.id) }?.id
     }
 
-    func connect(from: String, output: String, to: String, input: UInt32) {
+    @discardableResult
+    func connect(from: String, output: String,
+                 to: String, input: UInt32) -> GraphConnectionCompatibility {
         guard from != to, document.node(id: from) != nil,
               let target = document.node(id: to),
-              input < document.inputCount(for: target.type) else { return }
+              input < document.inputCount(for: target.type) else {
+            return .incompatible(message: "The selected ports are unavailable.")
+        }
+        let source = GraphOutputReference(node: from, output: output)
+        let compatibility = document.connectionCompatibility(
+            from: source, to: to, input: input)
+        guard compatibility.isAllowed else { return compatibility }
         setMaskBrushEnabled(false)
         pushUndo()
-        if target.type == "rivercarve",
-           input == 0,
-           document.node(id: from)?.type == "river",
-           let terrain = document.upstreamNodeId(to: from, input: 0) {
-            document.connect(from: terrain, to: to, input: 0)
-            document.connect(from: from, output: output, to: to, input: 1)
-        } else {
-            document.connect(from: from, output: output, to: to, input: input)
-            document.repairRiverCarveConnections()
-        }
+        document.connect(from: from, output: output, to: to, input: input)
         previewReference = GraphOutputReference(
             node: to, output: GraphDocument.defaultOutputName(for: target.type))
         selectedNodeId = to
         selectedNodeIds = [to]
         selectedConnectionId = nil
         syncPreviewWithDocument(markDirty: true)
+        return compatibility
     }
 
     func disconnect(_ edge: GraphDocumentConnection) {

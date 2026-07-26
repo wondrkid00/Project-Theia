@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- Made typed multi-output authoring explicit in the viewer with named input
+  ports, field-colored sockets and wires, compatibility guidance, guarded
+  connection drops, direct secondary-output preview, and a compatible-node
+  picker when a connection is dropped on empty canvas. Port names now use the
+  canonical `terrain`, `mask`, and `field` vocabulary, while legacy `height`
+  references migrate transparently. Contextual suggestions are ranked by the
+  selected output's purpose, and the picker stays above canvas controls.
+- Unified right-click and connection-drop node selection into the same compact,
+  searchable window, anchored it away from existing nodes, and replaced
+  duplicate id/type captions with a single readable node title and type icon.
+  The picker now follows both pointer axes, keeps the pending connector visible,
+  supports Command-A in search, and limits its viewport instead of expanding
+  through the full node catalog.
+
 ## 0.12.0-alpha.1
 
 - Added the `fluvial` landscape-evolution node with drainage-area-driven
@@ -54,7 +68,7 @@
   keys, plus named output enumeration/evaluation/readback APIs.
 - Upgraded graph persistence to format v2 with connection source ports,
   `sinkOutput`, and output-scoped mask erases; v1 files migrate automatically.
-- Added `erosionfilter.height` and `erosionfilter.ridge` in one Metal dispatch.
+- Added `erosionfilter.terrain` and `erosionfilter.ridge` in one Metal dispatch.
   Ridge is normalized analysis data where crease=`0`, neutral=`0.5`, ridge=`1`.
 - Added CLI `run/export --output`, typed port metadata in `nodes --json`, named
   raster export, and rejection of OBJ export for non-terrain fields.

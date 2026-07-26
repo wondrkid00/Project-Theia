@@ -146,8 +146,23 @@ std::string Graph::defaultOutputName(const Node& node) const {
 bool Graph::outputIndex(const Node& node, const std::string& outputName,
                         std::size_t& index, std::string& error) const {
     const auto ports = node.outputPorts();
-    const std::string selected = outputName.empty()
+    std::string selected = outputName.empty()
         ? defaultOutputName(node) : outputName;
+    // Graph v2 originally called terrain outputs `height`. Keep accepting
+    // that serialized/API spelling, while all new metadata and saves use the
+    // same `terrain` name as terrain inputs.
+    if (selected == "height" &&
+        std::none_of(ports.begin(), ports.end(),
+                     [](const OutputPortDescriptor& port) {
+                         return port.name == "height";
+                     }) &&
+        std::any_of(ports.begin(), ports.end(),
+                    [](const OutputPortDescriptor& port) {
+                        return port.name == "terrain" &&
+                               port.kind == FieldKind::terrain;
+                    })) {
+        selected = "terrain";
+    }
     for (std::size_t i = 0; i < ports.size(); ++i) {
         if (ports[i].name == selected) {
             index = i;
@@ -540,6 +555,16 @@ void Graph::setDefaults(const std::string& sink, std::uint32_t w, std::uint32_t 
                         const std::string& sinkOutput) {
     defaultSink_ = sink;
     defaultSinkOutput_ = sinkOutput;
+    auto sinkIt = nodes_.find(sink);
+    if (sinkIt != nodes_.end() && !sinkOutput.empty()) {
+        std::size_t outputIndexValue = 0;
+        std::string ignoredError;
+        if (outputIndex(*sinkIt->second, sinkOutput,
+                        outputIndexValue, ignoredError)) {
+            defaultSinkOutput_ =
+                sinkIt->second->outputPorts()[outputIndexValue].name;
+        }
+    }
     if (w > 0) defaultWidth_ = w;
     if (h > 0) defaultHeight_ = h;
 }
@@ -839,6 +864,8 @@ bool Graph::fromJSON(const std::string& text, std::string& error) {
             !next.validateSink(next.defaultSink_, error)) {
             return false;
         }
+        next.defaultSinkOutput_ =
+            sinkIt->second->outputPorts()[sinkOutputIndex].name;
     }
 
     // Preserve the cache across successful reloads: cache keys are content

@@ -1842,10 +1842,10 @@ h.test("Experimental erosion filter is registered with stable defaults") {
              "erosionfilter input count")
     h.expect(theia.graph_node_type_output_count("erosionfilter") == 2,
              "erosionfilter output count")
-    let heightName = readCxxString {
+    let terrainName = readCxxString {
         theia.graph_node_type_output_name("erosionfilter", 0, $0, $1)
     }
-    let heightKind = readCxxString {
+    let terrainKind = readCxxString {
         theia.graph_node_type_output_kind("erosionfilter", 0, $0, $1)
     }
     let ridgeName = readCxxString {
@@ -1854,9 +1854,9 @@ h.test("Experimental erosion filter is registered with stable defaults") {
     let ridgeKind = readCxxString {
         theia.graph_node_type_output_kind("erosionfilter", 1, $0, $1)
     }
-    h.expect(heightName == "height" && heightKind == "terrain" &&
+    h.expect(terrainName == "terrain" && terrainKind == "terrain" &&
              theia.graph_node_type_output_is_default("erosionfilter", 0),
-             "height output descriptor")
+             "terrain output descriptor")
     h.expect(ridgeName == "ridge" && ridgeKind == "data" &&
              !theia.graph_node_type_output_is_default("erosionfilter", 1),
              "ridge output descriptor")
@@ -2036,7 +2036,7 @@ h.test("Graph format v1 migrates through v2 with default ports and output-scoped
     h.expect(root["formatVersion"] as? Int == 2, "formatVersion should be 2")
     h.expect(root["sinkOutput"] as? String == "mask", "migrated sinkOutput")
     let edges = root["connections"] as? [[String: Any]] ?? []
-    h.expect(edges.first?["output"] as? String == "height",
+    h.expect(edges.first?["output"] as? String == "terrain",
              "legacy connection should map to source default output")
     let ui = root["ui"] as? [String: Any]
     let erases = ui?["maskErases"] as? [String: Any]
@@ -2074,6 +2074,8 @@ h.test("Legacy graph format v3 loads and normalizes to v2") {
     }
     h.expect(root["formatVersion"] as? Int == 2,
              "v3 input should normalize to formatVersion 2")
+    h.expect(root["sinkOutput"] as? String == "terrain",
+             "legacy height sink should normalize to terrain")
     h.expect(root["retiredExtension"] == nil,
              "unsupported legacy extension fields should be discarded")
 }

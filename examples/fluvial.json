@@ -5,7 +5,7 @@
     "height": 512
   },
   "sink": "scree",
-  "sinkOutput": "height",
+  "sinkOutput": "terrain",
   "nodes": [
     {
       "id": "base",
@@ -54,13 +54,13 @@
   "connections": [
     {
       "from": "base",
-      "output": "height",
+      "output": "terrain",
       "to": "carve",
       "input": 0
     },
     {
       "from": "carve",
-      "output": "height",
+      "output": "terrain",
       "to": "scree",
       "input": 0
     }

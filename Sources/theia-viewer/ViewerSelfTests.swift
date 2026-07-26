@@ -1,4 +1,5 @@
 import Foundation
+import AppKit
 import Combine
 import Metal
 import simd
@@ -66,6 +67,87 @@ func runViewerSelfTests() -> Int32 {
            "hydraulic rainfall needs a useful fine-grained range")
     print("✓ hydraulic authoring stability envelope")
 
+    expect(NodeTypeCatalog.nodeTitle(id: "perlin", type: "perlin") == "Perlin",
+           "canvas should collapse duplicate node id/type labels")
+    expect(NodeTypeCatalog.nodeTitle(id: "fluvial1", type: "fluvial") ==
+           "Fluvial Erosion 2",
+           "automatic duplicate ids should become readable instance titles")
+    expect(NodeTypeCatalog.nodeTitle(id: "riverCarveFinal",
+                                     type: "rivercarve") == "River Carve Final",
+           "custom node ids should become readable canvas titles")
+
+    let pickerSourceRect = CGRect(x: 220, y: 180, width: 168, height: 96)
+    let pickerPosition = NodePickerGeometry.position(
+        anchor: CGPoint(x: 400, y: 230),
+        canvasSize: CGSize(width: 1_000, height: 720),
+        obstructionRects: [pickerSourceRect],
+        sourceRect: pickerSourceRect)
+    let pickerRect = CGRect(
+        x: pickerPosition.x - NodePickerGeometry.size.width / 2,
+        y: pickerPosition.y - NodePickerGeometry.size.height / 2,
+        width: NodePickerGeometry.size.width,
+        height: NodePickerGeometry.size.height)
+    expect(!pickerRect.intersects(pickerSourceRect),
+           "connection picker should avoid covering its source node")
+    expect(pickerRect.minX >= 8 && pickerRect.maxX <= 992 &&
+           pickerRect.minY >= 8 && pickerRect.maxY <= 712,
+           "connection picker should remain inside the usable canvas")
+    let upperPickerPosition = NodePickerGeometry.position(
+        anchor: CGPoint(x: 700, y: 150),
+        canvasSize: CGSize(width: 1_000, height: 720),
+        obstructionRects: [],
+        sourceRect: nil)
+    let lowerPickerPosition = NodePickerGeometry.position(
+        anchor: CGPoint(x: 700, y: 500),
+        canvasSize: CGSize(width: 1_000, height: 720),
+        obstructionRects: [],
+        sourceRect: nil)
+    expect(abs(upperPickerPosition.y - lowerPickerPosition.y) > 100,
+           "right-click picker should follow the pointer vertically")
+    let mouseEventView = CanvasMouseEventNSView(
+        frame: CGRect(x: 0, y: 0, width: 1_000, height: 720))
+    var requestedPickerPoint: CGPoint?
+    mouseEventView.onRequestAddNode = { requestedPickerPoint = $0 }
+    if let mouseDown = NSEvent.mouseEvent(
+        with: .rightMouseDown,
+        location: CGPoint(x: 400, y: 230),
+        modifierFlags: [],
+        timestamp: 0,
+        windowNumber: 0,
+        context: nil,
+        eventNumber: 1,
+        clickCount: 1,
+        pressure: 1),
+       let mouseUp = NSEvent.mouseEvent(
+        with: .rightMouseUp,
+        location: CGPoint(x: 400, y: 230),
+        modifierFlags: [],
+        timestamp: 0.1,
+        windowNumber: 0,
+        context: nil,
+        eventNumber: 2,
+        clickCount: 1,
+        pressure: 0) {
+        mouseEventView.rightMouseDown(with: mouseDown)
+        mouseEventView.rightMouseUp(with: mouseUp)
+    }
+    expect(requestedPickerPoint != nil,
+           "right-click should request the shared canvas node picker")
+    let commandA = NSEvent.keyEvent(
+        with: .keyDown,
+        location: .zero,
+        modifierFlags: [.command],
+        timestamp: 0,
+        windowNumber: 0,
+        context: nil,
+        characters: "a",
+        charactersIgnoringModifiers: "a",
+        isARepeat: false,
+        keyCode: 0)
+    expect(commandA.map(NodePickerSearchField.isSelectAllShortcut) == true,
+           "node picker search should recognize Command-A")
+    print("✓ graph picker geometry and readable node titles")
+
     var document = GraphDocument.emptyDocument(width: 64, height: 64)
     let source = document.addNode(type: "perlin", at: GraphNodePosition(x: 10, y: 20))
     let filter = document.addNode(type: "blur", after: source)
@@ -73,7 +155,7 @@ func runViewerSelfTests() -> Int32 {
     document.sink = filter
     expect(document.nodes.count == 2, "node creation count")
     expect(document.connections == [GraphDocumentConnection(from: source,
-                                                             output: "height",
+                                                             output: "terrain",
                                                              to: filter,
                                                              input: 0)],
            "node connection should be recorded")
@@ -88,9 +170,9 @@ func runViewerSelfTests() -> Int32 {
     var multiOutput = GraphDocument.emptyDocument(width: 64, height: 64)
     let terrain = multiOutput.addNode(type: "perlin")
     let erosion = multiOutput.addNode(type: "erosionfilter", after: terrain)
-    multiOutput.connect(from: terrain, output: "height", to: erosion, input: 0)
+    multiOutput.connect(from: terrain, output: "terrain", to: erosion, input: 0)
     let erosionPorts = multiOutput.outputPorts(nodeId: erosion)
-    expect(erosionPorts.map(\.name) == ["height", "ridge"],
+    expect(erosionPorts.map(\.name) == ["terrain", "ridge"],
            "erosionfilter should enumerate named outputs")
     expect(erosionPorts.map(\.declaredKind) == [.terrain, .data],
            "erosionfilter output kinds")
@@ -100,7 +182,7 @@ func runViewerSelfTests() -> Int32 {
            "ridge should resolve as data")
     expect(multiOutput.terrainReference(
         for: GraphOutputReference(node: erosion, output: "ridge")) ==
-        GraphOutputReference(node: erosion, output: "height"),
+        GraphOutputReference(node: erosion, output: "terrain"),
         "data preview should use sibling terrain geometry")
     do {
         let encoded = try multiOutput.encodedString()
@@ -109,12 +191,97 @@ func runViewerSelfTests() -> Int32 {
         decoded.ensureLayout()
         expect(decoded.formatVersion == 2 && decoded.sinkOutput == "ridge",
                "v2 round-trip should preserve selected output")
-        expect(decoded.connections.first?.output == "height",
+        expect(decoded.connections.first?.output == "terrain",
                "v2 round-trip should preserve edge source port")
     } catch {
         expect(false, "multi-output round-trip failed: \(error)")
     }
     print("✓ typed multi-output authoring and preview geometry")
+
+    var portWorkflow = GraphDocument.emptyDocument(width: 64, height: 64)
+    let portBase = portWorkflow.addNode(type: "perlin")
+    let portFluvial = portWorkflow.addNode(type: "fluvial", after: portBase)
+    let portThermal = portWorkflow.addNode(type: "thermal", after: portFluvial)
+    let portCarve = portWorkflow.addNode(type: "rivercarve", after: portThermal)
+    let portRemap = portWorkflow.addNode(type: "remap", after: portCarve)
+    let portCombine = portWorkflow.addNode(type: "combine", after: portRemap)
+    portWorkflow.connect(from: portBase, output: "terrain",
+                         to: portFluvial, input: 0)
+    portWorkflow.connect(from: portBase, output: "terrain",
+                         to: portCombine, input: 0)
+    let terrainOutput = GraphOutputReference(node: portFluvial, output: "terrain")
+    let flowOutput = GraphOutputReference(node: portFluvial, output: "flow")
+
+    expect(portWorkflow.outputPorts(nodeId: portBase).map(\.name) == ["terrain"] &&
+           portWorkflow.inputPorts(nodeId: portFluvial).map(\.name) == ["terrain"] &&
+           portWorkflow.outputPorts(nodeId: portFluvial).map(\.name) ==
+               ["terrain", "flow"],
+           "terrain producers and consumers should share the terrain port name")
+    expect(portWorkflow.inputPorts(nodeId: portCarve).map(\.name) ==
+           ["terrain", "mask"],
+           "viewer should enumerate named input ports")
+    expect(portWorkflow.inputPorts(nodeId: portRemap).map(\.name) == ["field"] &&
+           portWorkflow.outputPorts(nodeId: portRemap).map(\.name) == ["field"] &&
+           portWorkflow.inputPorts(nodeId: portCombine).map(\.name) ==
+               ["base", "source"],
+           "generic and binary inputs should use meaningful canonical names")
+    expect(portWorkflow.connectionCompatibility(
+        from: terrainOutput, to: portThermal, input: 0).isAllowed,
+        "fluvial.terrain should connect to thermal.terrain")
+    let rejectedTerrain = portWorkflow.connectionCompatibility(
+        from: flowOutput, to: portThermal, input: 0)
+    expect(!rejectedTerrain.isAllowed &&
+           (rejectedTerrain.message?.contains("accepts terrain") ?? false),
+           "fluvial.flow should explain why thermal.terrain rejects data")
+    expect(portWorkflow.connectionCompatibility(
+        from: flowOutput, to: portCarve, input: 1).isAllowed,
+        "fluvial.flow should connect to rivercarve.mask")
+    expect(portWorkflow.connectionCompatibility(
+        from: flowOutput, to: portRemap, input: 0).isAllowed,
+        "fluvial.flow should connect to generic data transforms")
+    expect(!portWorkflow.connectionCompatibility(
+        from: flowOutput, to: portCombine, input: 1).isAllowed,
+        "combine should reject mixed terrain and data inputs")
+
+    let availableTargets = portWorkflow.compatibleNodeTargets(
+        from: flowOutput,
+        availableTypes: ["thermal", "rivercarve", "remap", "normalize",
+                         "export", "blend"])
+    let targetTypes = Set(availableTargets.map(\.nodeType))
+    expect(!targetTypes.contains("thermal") &&
+           targetTypes.isSuperset(of: ["rivercarve", "remap", "normalize",
+                                       "export", "blend"]),
+           "context picker should include only compatible data consumers")
+    expect(availableTargets.first(where: { $0.nodeType == "rivercarve" })?
+        .input.name == "mask",
+        "context picker should prefer River Carve's typed mask input")
+    expect(availableTargets.first?.nodeType == "rivercarve" &&
+           availableTargets.first?.reason.contains("flow") == true,
+           "flow recommendations should lead with River Carve and explain why")
+    let terrainTargets = portWorkflow.compatibleNodeTargets(
+        from: terrainOutput,
+        availableTypes: ["thermal", "rivercarve", "remap", "normalize",
+                         "export", "fluvial"])
+    expect(terrainTargets.first?.nodeType == "thermal" &&
+           terrainTargets.first?.reason.contains("thermal") == true,
+           "terrain recommendations should lead with terrain operations")
+    expect(terrainTargets.map(\.nodeType) != availableTargets.map(\.nodeType),
+           "terrain and flow should not present the same contextual ordering")
+
+    let unresolved = portWorkflow.addNode(type: "normalize", after: portCombine)
+    let unresolvedOutput = GraphOutputReference(node: unresolved, output: "field")
+    expect(!portWorkflow.connectionCompatibility(
+        from: unresolvedOutput, to: portThermal, input: 0).isAllowed,
+        "unresolved inherited output should not connect to terrain-only input")
+    let unresolvedExport = portWorkflow.addNode(type: "export", after: unresolved)
+    let pendingUniversal = portWorkflow.connectionCompatibility(
+        from: unresolvedOutput, to: unresolvedExport, input: 0)
+    if case .pending = pendingUniversal {
+        expect(true, "unresolved output should remain pending on universal input")
+    } else {
+        expect(false, "unresolved output should be pending on universal input")
+    }
+    print("✓ typed connection compatibility and contextual targets")
 
     do {
         var migrated = try JSONDecoder().decode(GraphDocument.self, from: Data("""
@@ -134,7 +301,7 @@ func runViewerSelfTests() -> Int32 {
         migrated.ensureLayout()
         expect(migrated.formatVersion == 2 && migrated.sinkOutput == "mask",
                "v1 sink should migrate to its default named output")
-        expect(migrated.connections.first?.output == "height",
+        expect(migrated.connections.first?.output == "terrain",
                "v1 edge should migrate to source default output")
         expect(migrated.maskEraseStrokes(nodeId: "river", output: "mask").count == 1,
                "v1 mask edits should migrate under the mask output")
@@ -151,9 +318,12 @@ func runViewerSelfTests() -> Int32 {
           "sink": "base",
           "sinkOutput": "height",
           "nodes": [
-            { "id": "base", "type": "perlin", "params": {} }
+            { "id": "base", "type": "perlin", "params": {} },
+            { "id": "filter", "type": "blur", "params": {} }
           ],
-          "connections": [],
+          "connections": [
+            { "from": "base", "output": "height", "to": "filter", "input": 0 }
+          ],
           "retiredExtension": { "enabled": true }
         }
         """.utf8))
@@ -163,6 +333,11 @@ func runViewerSelfTests() -> Int32 {
             with: Data(encoded.utf8)) as? [String: Any]
         expect(root?["formatVersion"] as? Int == 2,
                "v3 input should normalize to formatVersion 2")
+        expect(root?["sinkOutput"] as? String == "terrain",
+               "legacy height sink should normalize to terrain")
+        let connections = root?["connections"] as? [[String: Any]]
+        expect(connections?.first?["output"] as? String == "terrain",
+               "legacy height edge should normalize to terrain")
         expect(root?["retiredExtension"] == nil,
                "unsupported legacy extension fields should be discarded")
     } catch {
@@ -189,7 +364,7 @@ func runViewerSelfTests() -> Int32 {
         duplicateInputs.isOutputEvaluable(duplicateOutput),
         "viewer must use the core's last-connection-wins policy for kind validation")
     expect(duplicateInputs.terrainReference(for: duplicateOutput) ==
-           GraphOutputReference(node: duplicateTerrain, output: "height"),
+           GraphOutputReference(node: duplicateTerrain, output: "terrain"),
            "terrain traversal must follow only each effective inbound connection")
     print("✓ effective connections drive output evaluability")
 
@@ -214,7 +389,7 @@ func runViewerSelfTests() -> Int32 {
     var maskDocument = GraphDocument.emptyDocument(width: 64, height: 64)
     let maskTerrain = maskDocument.addNode(type: "perlin")
     let maskNode = maskDocument.addNode(type: "river", after: maskTerrain)
-    maskDocument.connect(from: maskTerrain, output: "height",
+    maskDocument.connect(from: maskTerrain, output: "terrain",
                          to: maskNode, input: 0)
     maskDocument.setSink(nodeId: maskNode, output: "mask")
     maskDocument.addMaskEraseStroke(
@@ -326,6 +501,47 @@ func runViewerSelfTests() -> Int32 {
         expect(false, "Metal renderer unavailable for preview/output separation test")
     }
 
+    if let device = MTLCreateSystemDefaultDevice(),
+       let renderer = Renderer(device: device, colorFormat: .bgra8Unorm),
+       let engine = TerrainEngine(graphPath: "examples/fluvial.json") {
+        let model = TerrainModel(engine: engine, renderer: renderer, size: 32)
+        let originalNodeCount = model.document.nodes.count
+        let originalConnections = model.document.connections
+        let invalid = model.connect(from: "carve", output: "flow",
+                                    to: "scree", input: 0)
+        expect(!invalid.isAllowed &&
+               model.document.connections == originalConnections &&
+               !model.isDirty,
+               "invalid typed connection must not mutate or dirty the document")
+
+        let created = model.addNode(
+            type: "remap",
+            at: GraphNodePosition(x: 720, y: 160),
+            connecting: GraphOutputReference(node: "carve", output: "flow"),
+            to: 0)
+        let remap = model.document.nodes.first {
+            $0.type == "remap" && $0.id != "carve"
+        }
+        expect(created && model.document.nodes.count == originalNodeCount + 1 &&
+               remap != nil &&
+               model.document.connections.contains(where: {
+                   $0.from == "carve" && $0.output == "flow" &&
+                   $0.to == remap?.id && $0.input == 0
+               }),
+               "context creation should atomically create and connect the node")
+        expect(remap.flatMap { model.document.ui?.positions[$0.id] } ==
+               GraphNodePosition(x: 720, y: 160),
+               "context-created node should use the connection drop position")
+        model.undo()
+        expect(model.document.nodes.count == originalNodeCount &&
+               model.document.connections == originalConnections &&
+               !model.isDirty,
+               "one undo should remove the contextual node and its connection")
+        print("✓ guarded connection and atomic contextual creation")
+    } else {
+        expect(false, "Metal renderer unavailable for typed connection model test")
+    }
+
     let previewWorker = TerrainPreviewWorker()
     let previewJSON: (Int) -> String = { seed in
         """
@@ -342,13 +558,14 @@ func runViewerSelfTests() -> Int32 {
     var previewFinished = false
     var previewCompletions = 0
     let submitStarted = Date()
-    let terrainOutput = GraphOutputReference(node: "terrain", output: "height")
-    previewWorker.submit(jsonText: previewJSON(1), geometry: terrainOutput,
-                         data: terrainOutput, size: 32) { _ in
+    let previewTerrainOutput = GraphOutputReference(node: "terrain",
+                                                    output: "terrain")
+    previewWorker.submit(jsonText: previewJSON(1), geometry: previewTerrainOutput,
+                         data: previewTerrainOutput, size: 32) { _ in
         previewCompletions += 1
     }
-    previewWorker.submit(jsonText: previewJSON(2), geometry: terrainOutput,
-                         data: terrainOutput, size: 32) { outcome in
+    previewWorker.submit(jsonText: previewJSON(2), geometry: previewTerrainOutput,
+                         data: previewTerrainOutput, size: 32) { outcome in
         previewCompletions += 1
         if case .success(let preview) = outcome {
             expect(preview.width == 32 && preview.height == 32,

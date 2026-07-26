@@ -46,7 +46,7 @@ std::vector<InputPortDescriptor> Node::inputPorts() const {
     std::vector<InputPortDescriptor> ports;
     ports.reserve(inputCount());
     for (std::size_t i = 0; i < inputCount(); ++i) {
-        ports.push_back({"input" + std::to_string(i), anyFieldKinds()});
+        ports.push_back({"field", anyFieldKinds()});
     }
     if (ports.empty()) return ports;
 
@@ -54,8 +54,8 @@ std::vector<InputPortDescriptor> Node::inputPorts() const {
         ports[0] = {"terrain", {FieldKind::terrain}};
         ports[1] = {"mask", {FieldKind::mask, FieldKind::data}};
     } else if (type_ == "combine" || type_ == "blend") {
-        ports[0].name = "a";
-        ports[1].name = "b";
+        ports[0].name = "base";
+        ports[1].name = "source";
     } else if (type_ == "river" || type_ == "slopemask" ||
                type_ == "hydraulic" || type_ == "dropleterosion" ||
                type_ == "thermal" || type_ == "terrace" ||
@@ -68,11 +68,11 @@ std::vector<InputPortDescriptor> Node::inputPorts() const {
 
 std::vector<OutputPortDescriptor> Node::outputPorts() const {
     if (type_ == "erosionfilter") {
-        return {{"height", FieldKind::terrain, -1, true},
+        return {{"terrain", FieldKind::terrain, -1, true},
                 {"ridge", FieldKind::data, -1, false}};
     }
     if (type_ == "fluvial") {
-        return {{"height", FieldKind::terrain, -1, true},
+        return {{"terrain", FieldKind::terrain, -1, true},
                 {"flow", FieldKind::data, -1, false}};
     }
     if (type_ == "river" || type_ == "slopemask") {
@@ -83,7 +83,7 @@ std::vector<OutputPortDescriptor> Node::outputPorts() const {
         type_ == "combine" || type_ == "blend" || type_ == "export") {
         return {{"field", FieldKind::data, 0, true}};
     }
-    return {{"height", FieldKind::terrain, -1, true}};
+    return {{"terrain", FieldKind::terrain, -1, true}};
 }
 
 bool Node::evaluateOutputs(GPUContext& ctx,

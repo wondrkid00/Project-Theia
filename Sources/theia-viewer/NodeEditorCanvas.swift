@@ -1,10 +1,92 @@
 import AppKit
 import SwiftUI
 
-let nodeSize = CGSize(width: 150, height: 96)
-let inputGap: CGFloat = 18
 private let minCanvasZoom = 0.35
 private let maxCanvasZoom = 2.5
+
+private struct CanvasNodePickerState {
+    let source: GraphOutputReference?
+    let screenPoint: CGPoint
+    let documentPoint: GraphNodePosition
+    let targets: [GraphCompatibleNodeTarget]
+    let availableTypes: [String]
+}
+
+private enum NodePickerSelection {
+    case compatible(GraphCompatibleNodeTarget)
+    case nodeType(String)
+}
+
+enum NodePickerGeometry {
+    static let size = CGSize(width: 296, height: 310)
+    private static let gap: CGFloat = 12
+    private static let margin: CGFloat = 8
+
+    static func position(anchor: CGPoint,
+                         canvasSize: CGSize,
+                         obstructionRects: [CGRect],
+                         sourceRect: CGRect?) -> CGPoint {
+        let safeRect = CGRect(
+            x: margin,
+            y: margin,
+            width: max(0, canvasSize.width - margin * 2),
+            height: max(0, canvasSize.height - margin * 2))
+        let toolbarRect = CGRect(x: 0, y: 0,
+                                 width: canvasSize.width, height: 58)
+
+        let rawOrigins = [
+            (CGPoint(x: anchor.x + gap, y: anchor.y - 30), CGFloat.zero),
+            (CGPoint(x: anchor.x + gap, y: anchor.y + gap), CGFloat(1_200)),
+            (CGPoint(x: anchor.x + gap,
+                     y: anchor.y - size.height - gap), CGFloat(1_200)),
+            (CGPoint(x: anchor.x - size.width - gap,
+                     y: anchor.y - 30), CGFloat.zero),
+            (CGPoint(x: anchor.x - size.width - gap,
+                     y: anchor.y + gap), CGFloat(1_200)),
+            (CGPoint(x: anchor.x - size.width - gap,
+                     y: anchor.y - size.height - gap), CGFloat(1_200)),
+        ]
+
+        let candidates = rawOrigins.map { raw, alignmentPenalty -> (CGRect, CGFloat) in
+            let maxX = max(safeRect.minX, safeRect.maxX - size.width)
+            let maxY = max(safeRect.minY, safeRect.maxY - size.height)
+            let origin = CGPoint(
+                x: min(max(raw.x, safeRect.minX), maxX),
+                y: min(max(raw.y, safeRect.minY), maxY))
+            let rect = CGRect(origin: origin, size: size)
+            let clampDistance = abs(origin.x - raw.x) + abs(origin.y - raw.y)
+            let overlap = obstructionRects.reduce(CGFloat.zero) { total, item in
+                let intersection = rect.intersection(item)
+                guard !intersection.isNull else { return total }
+                return total + intersection.width * intersection.height
+            }
+            let sourceOverlap: CGFloat
+            if let sourceRect {
+                let intersection = rect.intersection(sourceRect)
+                sourceOverlap = intersection.isNull
+                    ? 0 : intersection.width * intersection.height
+            } else {
+                sourceOverlap = 0
+            }
+            let toolbarIntersection = rect.intersection(toolbarRect)
+            let toolbarOverlap = toolbarIntersection.isNull
+                ? 0 : toolbarIntersection.width * toolbarIntersection.height
+            return (rect, overlap * 4 + sourceOverlap * 12 +
+                    toolbarOverlap * 10 + clampDistance * 8 +
+                    alignmentPenalty)
+        }
+
+        let best = candidates.enumerated().min {
+            if $0.element.1 != $1.element.1 {
+                return $0.element.1 < $1.element.1
+            }
+            return $0.offset < $1.offset
+        }?.element.0 ?? CGRect(origin: CGPoint(x: margin,
+                                               y: margin),
+                               size: size)
+        return CGPoint(x: best.midX, y: best.midY)
+    }
+}
 
 struct NodeTypeGroup: Identifiable {
     let id: String
@@ -75,6 +157,37 @@ enum NodeTypeCatalog {
             return type.prefix(1).uppercased() + type.dropFirst()
         }
     }
+
+    static func icon(for type: String) -> String {
+        groups.first(where: { $0.types.contains(type) })?.systemImage
+            ?? "square.dashed"
+    }
+
+    static func nodeTitle(id: String, type: String) -> String {
+        let typeTitle = title(for: type)
+        if id == type { return typeTitle }
+        if id.hasPrefix(type) {
+            let suffix = String(id.dropFirst(type.count))
+            if let index = Int(suffix), !suffix.isEmpty {
+                return "\(typeTitle) \(index + 1)"
+            }
+        }
+        return humanized(id)
+    }
+
+    private static func humanized(_ value: String) -> String {
+        var result = ""
+        for scalar in value.replacingOccurrences(of: "_", with: " ")
+            .replacingOccurrences(of: "-", with: " ").unicodeScalars {
+            if CharacterSet.uppercaseLetters.contains(scalar),
+               !result.isEmpty, !result.hasSuffix(" ") {
+                result.append(" ")
+            }
+            result.unicodeScalars.append(scalar)
+        }
+        guard let first = result.first else { return value }
+        return first.uppercased() + result.dropFirst()
+    }
 }
 
 struct NodeEditorCanvas: View {
@@ -90,6 +203,9 @@ struct NodeEditorCanvas: View {
     @State private var marqueeEnd: CGPoint?
     @State private var pendingSource: GraphOutputReference?
     @State private var pendingPoint: CGPoint?
+    @State private var nodePicker: CanvasNodePickerState?
+    @State private var connectionFeedback: String?
+    @State private var feedbackGeneration = 0
 
     var body: some View {
         GeometryReader { geo in
@@ -97,16 +213,21 @@ struct NodeEditorCanvas: View {
                 Color(nsColor: .underPageBackgroundColor)
                     .contentShape(Rectangle())
                     .onTapGesture {
+                        nodePicker = nil
+                        pendingSource = nil
+                        pendingPoint = nil
                         model.clearSelectionToFlat()
                         viewport.setNeedsDisplay(viewport.bounds)
                     }
 
                 CanvasGrid(pan: pan, zoom: zoom)
+                    .allowsHitTesting(false)
 
                 ForEach(model.document.connections) { edge in
                     EdgeView(edge: edge,
                              start: screen(outputPort(edge.from, output: edge.output)),
                              end: screen(inputPort(edge.to, input: edge.input)),
+                             color: edgeColor(edge),
                              selected: model.selectedConnectionId == edge.id,
                              zoom: zoom)
                         .onTapGesture {
@@ -124,7 +245,8 @@ struct NodeEditorCanvas: View {
                                                        output: source.output)),
                               end: point,
                               minHandle: 50 * CGFloat(zoom))
-                        .stroke(.blue, style: StrokeStyle(lineWidth: 2, dash: [6, 4]))
+                        .stroke(sourceColor(source),
+                                style: StrokeStyle(lineWidth: 2, dash: [6, 4]))
                 }
 
                 if let rect = marqueeRect {
@@ -145,24 +267,26 @@ struct NodeEditorCanvas: View {
                 }
 
                 ForEach(model.document.nodes) { node in
+                    let inputs = model.inputPorts(for: node.id)
                     NodeCard(node: node,
                              position: screen(nodePosition(node.id)),
                              selected: model.selectedNodeIds.contains(node.id),
-                             inputCount: model.document.inputCount(for: node.type),
+                             inputPorts: inputs,
                              outputPorts: model.outputPorts(for: node.id),
                              connectedInputs: connectedInputs(for: node.id),
                              missingInputs: model.missingDiagnosticInputs(for: node.id),
+                             inputDragStates: dragStates(for: node.id,
+                                                        inputs: inputs),
                              diagnosticSeverity: model.diagnosticSeverity(for: node.id),
-                             onSelect: { selectNode(node.id) },
+                             onSelect: {
+                                 if model.selectedNodeId != node.id {
+                                     selectNode(node.id)
+                                 }
+                             },
                              onDelete: { model.selectNode(node.id); model.deleteSelection() },
                              onDuplicate: { model.selectNode(node.id); model.duplicateSelection() },
                              onSelectUpstream: { model.selectNode(node.id); model.selectUpstreamOfSelection() },
                              onSelectDownstream: { model.selectNode(node.id); model.selectDownstreamOfSelection() },
-                             onInputTap: { input in
-                                 if let source = pendingSource {
-                                     finishConnection(from: source, to: node.id, input: input)
-                                 }
-                             },
                              onInputDisconnect: { input in
                                  if let edge = model.document.connections.first(where: {
                                      $0.to == node.id && $0.input == input
@@ -171,7 +295,13 @@ struct NodeEditorCanvas: View {
                                      viewport.setNeedsDisplay(viewport.bounds)
                                  }
                              },
+                             onOutputPreview: { output in
+                                 model.selectOutput(nodeId: node.id, output: output)
+                                 viewport.setNeedsDisplay(viewport.bounds)
+                             },
                              onOutputDragChanged: { output, point in
+                                 nodePicker = nil
+                                 connectionFeedback = nil
                                  pendingSource = GraphOutputReference(node: node.id,
                                                                       output: output)
                                  pendingPoint = point
@@ -209,6 +339,7 @@ struct NodeEditorCanvas: View {
                             model.endInteractiveMove()
                         })
                 }
+
             }
             .coordinateSpace(name: "node-canvas")
             .clipped()
@@ -230,19 +361,24 @@ struct NodeEditorCanvas: View {
                         pan = CGSize(width: pan.width + delta.width,
                                      height: pan.height + delta.height)
                     },
-                    nodeTypes: model.availableNodeTypes,
-                    onAddNode: { type, point in
+                    onRequestAddNode: { point in
                         let doc = documentPoint(point)
-                        model.addNode(type: type,
-                                      at: GraphNodePosition(x: doc.x, y: doc.y))
-                        viewport.setNeedsDisplay(viewport.bounds)
+                        pendingSource = nil
+                        pendingPoint = nil
+                        nodePicker = CanvasNodePickerState(
+                            source: nil,
+                            screenPoint: point,
+                            documentPoint: GraphNodePosition(x: doc.x, y: doc.y),
+                            targets: [],
+                            availableTypes: model.availableNodeTypes)
                     },
                     isOverNode: { point in
                         model.document.nodes.contains { node in
                             let origin = screen(nodePosition(node.id))
+                            let size = nodeCardSize(node)
                             return CGRect(x: origin.x, y: origin.y,
-                                          width: nodeSize.width * zoom,
-                                          height: nodeSize.height * zoom)
+                                          width: size.width * zoom,
+                                          height: size.height * zoom)
                                 .contains(point)
                         }
                     })
@@ -268,9 +404,52 @@ struct NodeEditorCanvas: View {
                     .padding(.leading, 8)
             }
             .overlay(alignment: .bottomLeading) {
-                CanvasGraphStatus(model: model)
+                CanvasGraphStatus(model: model,
+                                  source: pendingSource,
+                                  feedback: connectionFeedback)
                     .padding(.leading, 12)
                     .padding(.bottom, 12)
+            }
+            // This must be the final overlay. A zIndex inside the graph ZStack
+            // cannot rise above sibling toolbar overlays.
+            .overlay {
+                if let picker = nodePicker {
+                    NodeSelectionWindow(
+                        source: picker.source,
+                        targets: picker.targets,
+                        availableTypes: picker.availableTypes,
+                        onSelect: { selection in
+                            switch selection {
+                            case .compatible(let target):
+                                guard let source = picker.source else { break }
+                                if model.addNode(type: target.nodeType,
+                                                 at: picker.documentPoint,
+                                                 connecting: source,
+                                                 to: target.input.index) {
+                                    showConnectionFeedback(
+                                        "Connected \(source.output) to \(NodeTypeCatalog.title(for: target.nodeType)).\(target.input.name).")
+                                }
+                            case .nodeType(let type):
+                                model.addNode(type: type,
+                                              at: picker.documentPoint)
+                            }
+                            nodePicker = nil
+                            pendingSource = nil
+                            pendingPoint = nil
+                            viewport.setNeedsDisplay(viewport.bounds)
+                        },
+                        onCancel: {
+                            nodePicker = nil
+                            pendingSource = nil
+                            pendingPoint = nil
+                        })
+                        .position(NodePickerGeometry.position(
+                            anchor: picker.screenPoint,
+                            canvasSize: geo.size,
+                            obstructionRects: nodeScreenRects(),
+                            sourceRect: picker.source.flatMap(sourceNodeScreenRect)))
+                        .zIndex(100)
+                }
             }
         }
         .frame(minHeight: 280)
@@ -293,9 +472,10 @@ struct NodeEditorCanvas: View {
         guard let rect = marqueeRect else { return }
         let selected = Set(model.document.nodes.compactMap { node -> String? in
             let p = screen(nodePosition(node.id))
+            let size = nodeCardSize(node)
             let nodeRect = CGRect(x: p.x, y: p.y,
-                                  width: nodeSize.width * zoom,
-                                  height: nodeSize.height * zoom)
+                                  width: size.width * zoom,
+                                  height: size.height * zoom)
             return rect.intersects(nodeRect) ? node.id : nil
         })
         model.selectNodesForMarquee(selected)
@@ -329,19 +509,28 @@ struct NodeEditorCanvas: View {
         CGPoint(x: (point.x - pan.width) / zoom, y: (point.y - pan.height) / zoom)
     }
 
+    private func nodeCardSize(_ node: GraphDocumentNode) -> CGSize {
+        NodePortLayout.size(
+            inputCount: model.inputPorts(for: node.id).count,
+            outputCount: model.outputPorts(for: node.id).count)
+    }
+
     private func outputPort(_ id: String, output: String) -> CGPoint {
         let p = nodePosition(id)
         let outputs = model.outputPorts(for: id)
-        let count = max(1, outputs.count)
         let index = outputs.firstIndex(where: { $0.name == output }) ?? 0
-        let startY = nodeSize.height * 0.5 - CGFloat(count - 1) * inputGap * 0.5
-        return CGPoint(x: p.x + nodeSize.width,
-                       y: p.y + startY + CGFloat(index) * inputGap)
+        let inputCount = model.inputPorts(for: id).count
+        let size = NodePortLayout.size(inputCount: inputCount,
+                                       outputCount: outputs.count)
+        return CGPoint(x: p.x + size.width,
+                       y: p.y + NodePortLayout.outputY(index))
     }
 
     private func inputPort(_ id: String, input: UInt32) -> CGPoint {
         let p = nodePosition(id)
-        return CGPoint(x: p.x, y: p.y + 34 + CGFloat(input) * inputGap)
+        let inputs = model.inputPorts(for: id)
+        let index = inputs.firstIndex(where: { $0.index == input }) ?? Int(input)
+        return CGPoint(x: p.x, y: p.y + NodePortLayout.inputY(index))
     }
 
     private func connectedInputs(for nodeId: String) -> Set<UInt32> {
@@ -352,12 +541,24 @@ struct NodeEditorCanvas: View {
                                   to: String, input: UInt32) {
         pendingSource = nil
         pendingPoint = nil
-        model.connect(from: from.node, output: from.output, to: to, input: input)
+        let result = model.connect(from: from.node, output: from.output,
+                                   to: to, input: input)
+        switch result {
+        case .compatible(let replaces):
+            showConnectionFeedback(replaces
+                ? "Replaced the connection with \(from.output)."
+                : "Connected \(from.output).")
+        case .pending(let message, _):
+            showConnectionFeedback(message)
+        case .incompatible(let message):
+            showConnectionFeedback(message)
+        }
         viewport.setNeedsDisplay(viewport.bounds)
     }
 
     private func finishConnectionDrop(from: GraphOutputReference, point: CGPoint) {
         let docPoint = documentPoint(point)
+        let hitRadius = 22 / max(zoom, 0.01)
         var best: (node: String, input: UInt32, distance: CGFloat)?
         for node in model.document.nodes {
             let count = model.document.inputCount(for: node.type)
@@ -366,7 +567,7 @@ struct NodeEditorCanvas: View {
                 let dx = port.x - docPoint.x
                 let dy = port.y - docPoint.y
                 let dist = sqrt(dx * dx + dy * dy)
-                if dist < 22 && (best == nil || dist < best!.distance) {
+                if dist < hitRadius && (best == nil || dist < best!.distance) {
                     best = (node.id, input, dist)
                 }
             }
@@ -374,8 +575,98 @@ struct NodeEditorCanvas: View {
         if let best {
             finishConnection(from: from, to: best.node, input: best.input)
         } else {
-            pendingSource = nil
-            pendingPoint = nil
+            if nodeAtDocumentPoint(docPoint) != nil {
+                pendingSource = nil
+                pendingPoint = nil
+                showConnectionFeedback("Drop the connection on a compatible input port.")
+                return
+            }
+            let targets = model.document.compatibleNodeTargets(
+                from: from, availableTypes: model.availableNodeTypes)
+            guard !targets.isEmpty else {
+                pendingSource = nil
+                pendingPoint = nil
+                showConnectionFeedback("No compatible node inputs are available.")
+                return
+            }
+            pendingSource = from
+            pendingPoint = point
+            nodePicker = CanvasNodePickerState(
+                source: from,
+                screenPoint: point,
+                documentPoint: GraphNodePosition(x: docPoint.x, y: docPoint.y),
+                targets: targets,
+                availableTypes: [])
+        }
+    }
+
+    private func dragStates(for nodeId: String,
+                            inputs: [GraphInputPort]) -> [UInt32: InputPortDragState] {
+        guard nodePicker == nil, let source = pendingSource else { return [:] }
+        return Dictionary(uniqueKeysWithValues: inputs.map { input in
+            let compatibility = model.document.connectionCompatibility(
+                from: source, to: nodeId, input: input.index)
+            let state: InputPortDragState
+            switch compatibility {
+            case .compatible(let replaces):
+                state = .compatible(replacesExisting: replaces)
+            case .pending(_, let replaces):
+                state = .pending(replacesExisting: replaces)
+            case .incompatible:
+                state = .incompatible
+            }
+            return (input.index, state)
+        })
+    }
+
+    private func edgeColor(_ edge: GraphDocumentConnection) -> Color {
+        sourceColor(GraphOutputReference(node: edge.from, output: edge.output))
+    }
+
+    private func sourceColor(_ source: GraphOutputReference) -> Color {
+        let kind = model.document.resolvedOutputKind(nodeId: source.node,
+                                                     output: source.output)
+            ?? model.outputPorts(for: source.node)
+                .first(where: { $0.name == source.output })?.declaredKind
+            ?? .data
+        return GraphPortPalette.color(kind)
+    }
+
+    private func nodeAtDocumentPoint(_ point: CGPoint) -> GraphDocumentNode? {
+        model.document.nodes.first { node in
+            let origin = nodePosition(node.id)
+            let size = nodeCardSize(node)
+            return CGRect(origin: origin, size: size).contains(point)
+        }
+    }
+
+    private func nodeScreenRects() -> [CGRect] {
+        model.document.nodes.map { node in
+            let origin = screen(nodePosition(node.id))
+            let size = nodeCardSize(node)
+            return CGRect(x: origin.x, y: origin.y,
+                          width: size.width * zoom,
+                          height: size.height * zoom)
+        }
+    }
+
+    private func sourceNodeScreenRect(_ source: GraphOutputReference) -> CGRect? {
+        guard let node = model.document.node(id: source.node) else { return nil }
+        let origin = screen(nodePosition(node.id))
+        let size = nodeCardSize(node)
+        return CGRect(x: origin.x, y: origin.y,
+                      width: size.width * zoom,
+                      height: size.height * zoom)
+    }
+
+    private func showConnectionFeedback(_ message: String) {
+        feedbackGeneration += 1
+        let generation = feedbackGeneration
+        connectionFeedback = message
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(2.4))
+            guard generation == feedbackGeneration else { return }
+            connectionFeedback = nil
         }
     }
 }
@@ -491,8 +782,239 @@ private struct QuickAddStarterButton: View {
     }
 }
 
+private struct NodeSelectionWindow: View {
+    let source: GraphOutputReference?
+    let targets: [GraphCompatibleNodeTarget]
+    let availableTypes: [String]
+    let onSelect: (NodePickerSelection) -> Void
+    let onCancel: () -> Void
+    @State private var searchText = ""
+    @State private var hoveredTargetId: String?
+
+    private var isCompatiblePicker: Bool { source != nil }
+
+    private var visibleTargets: [GraphCompatibleNodeTarget] {
+        let query = searchText.trimmingCharacters(
+            in: .whitespacesAndNewlines).lowercased()
+        guard !query.isEmpty else { return targets }
+        return targets.filter { target in
+            target.nodeType.lowercased().contains(query) ||
+                NodeTypeCatalog.title(for: target.nodeType)
+                    .lowercased().contains(query) ||
+                target.input.name.lowercased().contains(query)
+        }
+    }
+
+    private var recommendedTargets: [GraphCompatibleNodeTarget] {
+        visibleTargets.filter(\.isRecommended)
+    }
+
+    private var otherTargets: [GraphCompatibleNodeTarget] {
+        visibleTargets.filter { !$0.isRecommended }
+    }
+
+    private var visibleGroups: [NodeTypeGroup] {
+        let query = searchText.trimmingCharacters(
+            in: .whitespacesAndNewlines).lowercased()
+        let groups = NodeTypeCatalog.grouped(availableTypes)
+        guard !query.isEmpty else { return groups }
+        return groups.compactMap { group in
+            let matching = group.types.filter { type in
+                type.lowercased().contains(query) ||
+                    NodeTypeCatalog.title(for: type)
+                        .lowercased().contains(query) ||
+                    group.title.lowercased().contains(query)
+            }
+            guard !matching.isEmpty else { return nil }
+            return NodeTypeGroup(id: group.id,
+                                 title: group.title,
+                                 systemImage: group.systemImage,
+                                 types: matching)
+        }
+    }
+
+    private var hasVisibleItems: Bool {
+        isCompatiblePicker ? !visibleTargets.isEmpty : !visibleGroups.isEmpty
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(isCompatiblePicker ? "Add Compatible Node" : "Add Node")
+                        .font(.system(size: 13, weight: .semibold))
+                    if let source {
+                        Text("\(source.node).\(source.output)")
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Text("Choose a node for this workflow")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                Spacer()
+                Button(action: onCancel) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 10, weight: .bold))
+                        .frame(width: 22, height: 22)
+                }
+                .buttonStyle(.plain)
+            }
+
+            HStack(spacing: 7) {
+                Image(systemName: "magnifyingglass")
+                    .foregroundStyle(.secondary)
+                NodeSearchField(text: $searchText,
+                                placeholder: isCompatiblePicker
+                                    ? "Search compatible nodes"
+                                    : "Search nodes")
+                    .frame(height: 22)
+            }
+            .padding(.horizontal, 9)
+            .frame(height: 32)
+            .background(Color.black.opacity(0.18),
+                        in: RoundedRectangle(cornerRadius: 7,
+                                             style: .continuous))
+
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 7) {
+                    if isCompatiblePicker {
+                        if !recommendedTargets.isEmpty {
+                            compatibleSection("Recommended",
+                                              targets: recommendedTargets)
+                        }
+                        if !otherTargets.isEmpty {
+                            compatibleSection(recommendedTargets.isEmpty
+                                ? "Compatible" : "All Compatible",
+                                              targets: otherTargets)
+                        }
+                    } else {
+                        ForEach(visibleGroups) { group in
+                            catalogSection(group)
+                        }
+                    }
+                }
+            }
+
+            if !hasVisibleItems {
+                Text(isCompatiblePicker
+                     ? "No matching compatible nodes"
+                     : "No matching nodes")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .center)
+            }
+        }
+        .padding(12)
+        .frame(width: NodePickerGeometry.size.width,
+               height: NodePickerGeometry.size.height)
+        .background(.regularMaterial,
+                    in: RoundedRectangle(cornerRadius: 10,
+                                         style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(Color.white.opacity(0.14), lineWidth: 1))
+        .shadow(color: .black.opacity(0.42), radius: 18, y: 8)
+        .onExitCommand(perform: onCancel)
+    }
+
+    @ViewBuilder
+    private func compatibleSection(
+        _ title: String,
+        targets: [GraphCompatibleNodeTarget]
+    ) -> some View {
+        Text(title.uppercased())
+            .font(.system(size: 9, weight: .bold))
+            .tracking(0.8)
+            .foregroundStyle(.tertiary)
+            .padding(.horizontal, 9)
+            .padding(.top, 3)
+
+        ForEach(targets) { target in
+            Button {
+                onSelect(.compatible(target))
+            } label: {
+                HStack(alignment: .top, spacing: 9) {
+                    Circle()
+                        .fill(GraphPortPalette.inputColor(target.input))
+                        .frame(width: 9, height: 9)
+                        .padding(.top, 4)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(NodeTypeCatalog.title(for: target.nodeType))
+                            .font(.system(size: 12, weight: .semibold))
+                        Text(target.reason)
+                            .font(.system(size: 9))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                    Spacer(minLength: 8)
+                    Text(target.input.name)
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .padding(.top, 2)
+                }
+                .padding(.horizontal, 9)
+                .padding(.vertical, 6)
+                .contentShape(Rectangle())
+                .background(
+                    hoveredTargetId == target.id
+                        ? Color.white.opacity(0.10)
+                        : Color.clear,
+                    in: RoundedRectangle(cornerRadius: 6,
+                                         style: .continuous))
+            }
+            .buttonStyle(.plain)
+            .onHover { hovering in
+                hoveredTargetId = hovering ? target.id : nil
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func catalogSection(_ group: NodeTypeGroup) -> some View {
+        Label(group.title.uppercased(), systemImage: group.systemImage)
+            .font(.system(size: 9, weight: .bold))
+            .tracking(0.8)
+            .foregroundStyle(.tertiary)
+            .padding(.horizontal, 9)
+            .padding(.top, 5)
+
+        ForEach(group.types, id: \.self) { type in
+            Button {
+                onSelect(.nodeType(type))
+            } label: {
+                HStack(spacing: 9) {
+                    Image(systemName: NodeTypeCatalog.icon(for: type))
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 14)
+                    Text(NodeTypeCatalog.title(for: type))
+                        .font(.system(size: 12, weight: .semibold))
+                    Spacer(minLength: 8)
+                }
+                .padding(.horizontal, 9)
+                .frame(height: 32)
+                .contentShape(Rectangle())
+                .background(
+                    hoveredTargetId == "type.\(type)"
+                        ? Color.white.opacity(0.10)
+                        : Color.clear,
+                    in: RoundedRectangle(cornerRadius: 6,
+                                         style: .continuous))
+            }
+            .buttonStyle(.plain)
+            .onHover { hovering in
+                hoveredTargetId = hovering ? "type.\(type)" : nil
+            }
+        }
+    }
+}
+
 struct CanvasGraphStatus: View {
     @ObservedObject var model: TerrainModel
+    let source: GraphOutputReference?
+    let feedback: String?
 
     var body: some View {
         Label(primaryText, systemImage: primaryIcon)
@@ -506,17 +1028,31 @@ struct CanvasGraphStatus: View {
     }
 
     private var primaryIcon: String {
+        if feedback != nil { return "info.circle.fill" }
+        if source != nil { return "arrow.right.circle.fill" }
         if model.diagnostics.authoringErrorCount > 0 { return "exclamationmark.triangle.fill" }
         if model.diagnostics.authoringWarningCount > 0 { return "exclamationmark.circle.fill" }
         return model.document.nodes.isEmpty ? "rectangle.connected.to.line.below" : "point.3.connected.trianglepath.dotted"
     }
 
     private var primaryText: String {
+        if let feedback { return feedback }
+        if let source {
+            let kind = model.document.resolvedOutputKind(
+                nodeId: source.node, output: source.output)?.rawValue ?? "unresolved"
+            return "\(source.output) · \(kind) — choose a compatible input"
+        }
         let count = model.document.nodes.count
         return "\(count) node\(count == 1 ? "" : "s")"
     }
 
     private var statusColor: Color {
+        if feedback != nil { return .primary }
+        if let source,
+           let kind = model.document.resolvedOutputKind(nodeId: source.node,
+                                                        output: source.output) {
+            return GraphPortPalette.color(kind)
+        }
         if model.diagnostics.authoringErrorCount > 0 { return .red }
         if model.diagnostics.authoringWarningCount > 0 { return .orange }
         return .secondary
@@ -767,6 +1303,24 @@ private struct AddNodePalette: View {
     }
 }
 
+final class NodePickerSearchField: NSSearchField {
+    static func isSelectAllShortcut(_ event: NSEvent) -> Bool {
+        event.modifierFlags
+            .intersection(.deviceIndependentFlagsMask)
+            .contains(.command) &&
+        event.charactersIgnoringModifiers?.lowercased() == "a"
+    }
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        guard Self.isSelectAllShortcut(event) else {
+            return super.performKeyEquivalent(with: event)
+        }
+        window?.makeFirstResponder(self)
+        selectText(nil)
+        return true
+    }
+}
+
 private struct NodeSearchField: NSViewRepresentable {
     @Binding var text: String
     let placeholder: String
@@ -776,7 +1330,7 @@ private struct NodeSearchField: NSViewRepresentable {
     }
 
     func makeNSView(context: Context) -> NSSearchField {
-        let field = NSSearchField(frame: .zero)
+        let field = NodePickerSearchField(frame: .zero)
         field.delegate = context.coordinator
         field.placeholderString = placeholder
         field.stringValue = text

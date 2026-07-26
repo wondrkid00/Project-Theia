@@ -1,25 +1,101 @@
 import AppKit
 import SwiftUI
 
+enum GraphPortPalette {
+    static func color(_ kind: GraphFieldKind) -> Color {
+        switch kind {
+        case .terrain: return .blue
+        case .mask: return .cyan
+        case .data: return .orange
+        }
+    }
+
+    static func inputColor(_ port: GraphInputPort) -> Color {
+        if port.acceptedKinds.count == 1, let kind = port.acceptedKinds.first {
+            return color(kind)
+        }
+        if port.acceptedKinds == [.mask, .data] {
+            return .teal
+        }
+        return Color(nsColor: .tertiaryLabelColor)
+    }
+
+    static func kindDescription(_ kinds: Set<GraphFieldKind>) -> String {
+        GraphFieldKind.allCases
+            .filter(kinds.contains)
+            .map(\.rawValue)
+            .joined(separator: "/")
+    }
+}
+
+enum NodePortLayout {
+    static let width: CGFloat = 168
+    static let minimumHeight: CGFloat = 96
+    static let rowGap: CGFloat = 20
+    static let firstRowY: CGFloat = 52
+
+    static func size(inputCount: Int, outputCount: Int) -> CGSize {
+        let rows = max(1, max(inputCount, outputCount))
+        let height = max(minimumHeight,
+                         firstRowY + CGFloat(rows - 1) * rowGap + 18)
+        return CGSize(width: width, height: height)
+    }
+
+    static func inputY(_ index: Int) -> CGFloat {
+        firstRowY + CGFloat(index) * rowGap
+    }
+
+    static func outputY(_ index: Int) -> CGFloat {
+        firstRowY + CGFloat(index) * rowGap
+    }
+}
+
+enum InputPortDragState: Equatable {
+    case idle
+    case compatible(replacesExisting: Bool)
+    case pending(replacesExisting: Bool)
+    case incompatible
+
+    var isHighlighted: Bool {
+        switch self {
+        case .compatible, .pending: return true
+        case .idle, .incompatible: return false
+        }
+    }
+
+    var isReplacement: Bool {
+        switch self {
+        case .compatible(let replaces), .pending(let replaces): return replaces
+        case .idle, .incompatible: return false
+        }
+    }
+}
+
 struct NodeCard: View {
     let node: GraphDocumentNode
     let position: CGPoint
     let selected: Bool
-    let inputCount: UInt32
+    let inputPorts: [GraphInputPort]
     let outputPorts: [GraphOutputPort]
     let connectedInputs: Set<UInt32>
     let missingInputs: Set<UInt32>
+    let inputDragStates: [UInt32: InputPortDragState]
     let diagnosticSeverity: String?
     let onSelect: () -> Void
     let onDelete: () -> Void
     let onDuplicate: () -> Void
     let onSelectUpstream: () -> Void
     let onSelectDownstream: () -> Void
-    let onInputTap: (UInt32) -> Void
     let onInputDisconnect: (UInt32) -> Void
+    let onOutputPreview: (String) -> Void
     let onOutputDragChanged: (String, CGPoint) -> Void
     let onOutputDragEnded: (String, CGPoint) -> Void
     let zoom: Double
+
+    private var cardSize: CGSize {
+        NodePortLayout.size(inputCount: inputPorts.count,
+                            outputCount: outputPorts.count)
+    }
 
     var body: some View {
         ZStack(alignment: .topLeading) {
@@ -33,31 +109,31 @@ struct NodeCard: View {
                         radius: selected ? 7 : 4,
                         y: selected ? 0 : 2)
 
-            VStack(alignment: .leading, spacing: 4) {
-                HStack {
-                    Text(node.id)
-                        .font(.caption.weight(.semibold))
-                        .lineLimit(1)
-                    Spacer()
-                }
-                Text(node.type)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                Spacer()
+            HStack(spacing: 7) {
+                Image(systemName: NodeTypeCatalog.icon(for: node.type))
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(nodeTint)
+                    .frame(width: 17, height: 17)
+                    .background(nodeTint.opacity(0.12), in: Circle())
+                Text(NodeTypeCatalog.nodeTitle(id: node.id, type: node.type))
+                    .font(.caption.weight(.semibold))
+                    .lineLimit(1)
+                Spacer(minLength: 24)
             }
             .padding(10)
+            .help("\(NodeTypeCatalog.title(for: node.type)) · id \(node.id)")
 
             if hasMaskOutput {
                 Image(systemName: "circle.lefthalf.filled")
                     .font(.caption2)
                     .foregroundStyle(Color.cyan.opacity(0.85))
-                    .position(x: nodeSize.width - 14, y: 14)
+                    .position(x: cardSize.width - 14, y: 14)
             }
 
             if node.type == "export" {
                 badge(systemImage: "square.and.arrow.up",
                       color: .purple)
-                    .position(x: nodeSize.width - 14, y: 14)
+                    .position(x: cardSize.width - 14, y: 14)
             }
 
             if let diagnosticSeverity {
@@ -65,44 +141,62 @@ struct NodeCard: View {
                       ? "exclamationmark.triangle.fill"
                       : "exclamationmark.circle.fill",
                       color: diagnosticSeverity == "error" ? .red : .orange)
-                    .position(x: nodeSize.width - 14, y: hasMaskOutput || node.type == "export" ? 32 : 14)
+                    .position(x: cardSize.width - 14,
+                              y: hasMaskOutput || node.type == "export" ? 32 : 14)
                     .transition(.scale.combined(with: .opacity))
             }
 
-            ForEach(0..<Int(inputCount), id: \.self) { input in
-                PortView(color: .green,
-                         warning: missingInputs.contains(UInt32(input)))
-                    .position(x: 0, y: 34 + CGFloat(input) * inputGap)
-                    .onTapGesture { onInputTap(UInt32(input)) }
+            ForEach(inputPorts) { input in
+                let state = inputDragStates[input.index] ?? .idle
+                Text(input.name)
+                    .font(.system(size: 8, design: .monospaced))
+                    .foregroundStyle(state == .incompatible
+                                     ? Color.secondary.opacity(0.35)
+                                     : Color.secondary)
+                    .frame(width: 68, alignment: .leading)
+                    .position(x: 39, y: NodePortLayout.inputY(Int(input.index)))
+                    .allowsHitTesting(false)
+
+                PortView(color: GraphPortPalette.inputColor(input),
+                         warning: missingInputs.contains(input.index),
+                         dragState: state)
+                    .position(x: 0, y: NodePortLayout.inputY(Int(input.index)))
+                    .help("\(input.name): accepts \(GraphPortPalette.kindDescription(input.acceptedKinds))")
                     .contextMenu {
-                        if connectedInputs.contains(UInt32(input)) {
+                        if connectedInputs.contains(input.index) {
                             Button("Disconnect") {
-                                onInputDisconnect(UInt32(input))
+                                onInputDisconnect(input.index)
                             }
                         }
                     }
             }
 
             ForEach(Array(outputPorts.enumerated()), id: \.element.name) { index, output in
-                let startY = nodeSize.height * 0.5 -
-                    CGFloat(max(0, outputPorts.count - 1)) * inputGap * 0.5
-                Text(output.name)
-                    .font(.system(size: 8, design: .monospaced))
-                    .foregroundStyle(.secondary)
-                    .position(x: nodeSize.width - 31,
-                              y: startY + CGFloat(index) * inputGap)
-                PortView(color: portColor(output.declaredKind))
-                    .position(x: nodeSize.width,
-                              y: startY + CGFloat(index) * inputGap)
+                let rowY = NodePortLayout.outputY(index)
+                HStack(spacing: 5) {
+                    Text(output.name)
+                        .font(.system(size: 8, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+                    PortView(color: GraphPortPalette.color(output.declaredKind))
+                }
+                .frame(width: 78, height: 20)
+                .contentShape(Rectangle())
+                .position(x: cardSize.width - 33, y: rowY)
+                .help("\(output.name): \(output.declaredKind.rawValue) output")
+                .highPriorityGesture(
+                    TapGesture().onEnded {
+                        onOutputPreview(output.name)
+                    })
                     .gesture(DragGesture(coordinateSpace: .named("node-canvas"))
                         .onChanged { onOutputDragChanged(output.name, $0.location) }
                         .onEnded { onOutputDragEnded(output.name, $0.location) })
             }
         }
-        .frame(width: nodeSize.width, height: nodeSize.height)
+        .frame(width: cardSize.width, height: cardSize.height)
         .scaleEffect(zoom, anchor: .center)
-        .position(x: position.x + nodeSize.width * CGFloat(zoom) * 0.5,
-                  y: position.y + nodeSize.height * CGFloat(zoom) * 0.5)
+        .position(x: position.x + cardSize.width * CGFloat(zoom) * 0.5,
+                  y: position.y + cardSize.height * CGFloat(zoom) * 0.5)
         .onTapGesture(perform: onSelect)
         .animation(.easeOut(duration: 0.14), value: selected)
         .animation(.easeOut(duration: 0.14), value: diagnosticSeverity)
@@ -128,31 +222,52 @@ struct NodeCard: View {
         outputPorts.contains { $0.declaredKind == .mask }
     }
 
+    private var nodeTint: Color {
+        guard let output = outputPorts.first(where: \.isDefault)
+                ?? outputPorts.first else { return .secondary }
+        return GraphPortPalette.color(output.declaredKind)
+    }
+
     private var borderColor: Color {
         if selected { return .accentColor }
         if diagnosticSeverity == "error" { return Color.red.opacity(0.75) }
         if hasMaskOutput { return Color.cyan.opacity(0.55) }
         return Color.secondary.opacity(0.35)
     }
-
-    private func portColor(_ kind: GraphFieldKind) -> Color {
-        switch kind {
-        case .terrain: return .blue
-        case .mask: return .cyan
-        case .data: return .orange
-        }
-    }
 }
 
 struct PortView: View {
     let color: Color
     var warning = false
+    var dragState: InputPortDragState = .idle
 
     var body: some View {
         Circle()
             .fill(color)
-            .frame(width: 11, height: 11)
-            .overlay(Circle().stroke(.white.opacity(0.75), lineWidth: 1))
+            .frame(width: dragState.isHighlighted ? 15 : 11,
+                   height: dragState.isHighlighted ? 15 : 11)
+            .overlay(
+                Circle().stroke(strokeColor,
+                                lineWidth: dragState.isHighlighted ? 2 : 1))
+            .overlay {
+                if dragState.isReplacement {
+                    Circle()
+                        .fill(Color.black.opacity(0.75))
+                        .frame(width: 4, height: 4)
+                }
+            }
+            .shadow(color: dragState.isHighlighted ? color.opacity(0.9) : .clear,
+                    radius: 5)
+            .opacity(dragState == .incompatible ? 0.24 : 1)
+            .animation(.easeOut(duration: 0.12), value: dragState)
+    }
+
+    private var strokeColor: Color {
+        if warning && dragState == .idle { return .orange }
+        switch dragState {
+        case .pending: return .yellow
+        default: return .white.opacity(0.75)
+        }
     }
 }
 
@@ -160,6 +275,7 @@ struct EdgeView: View {
     let edge: GraphDocumentConnection
     let start: CGPoint
     let end: CGPoint
+    let color: Color
     let selected: Bool
     let zoom: Double
 
@@ -170,7 +286,11 @@ struct EdgeView: View {
                         style: StrokeStyle(lineWidth: max(6, 16 * CGFloat(zoom)),
                                            lineCap: .round))
             EdgeShape(start: start, end: end, minHandle: 50 * CGFloat(zoom))
-                .stroke(selected ? Color.accentColor : Color.secondary,
+                .stroke(selected ? Color.accentColor.opacity(0.55) : .clear,
+                        style: StrokeStyle(lineWidth: max(1, 5 * CGFloat(zoom)),
+                                           lineCap: .round))
+            EdgeShape(start: start, end: end, minHandle: 50 * CGFloat(zoom))
+                .stroke(color.opacity(selected ? 1 : 0.78),
                         style: StrokeStyle(lineWidth: max(1, (selected ? 3 : 2) * CGFloat(zoom)),
                                            lineCap: .round))
         }
@@ -242,8 +362,7 @@ struct CanvasMouseEventView: NSViewRepresentable {
     let onEnded: () -> Void
     let onZoom: (CGFloat, CGPoint) -> Void
     let onPanBy: (CGSize) -> Void
-    let nodeTypes: [String]
-    let onAddNode: (String, CGPoint) -> Void
+    let onRequestAddNode: (CGPoint) -> Void
     let isOverNode: (CGPoint) -> Bool
 
     func makeNSView(context: Context) -> NSView {
@@ -262,8 +381,7 @@ struct CanvasMouseEventView: NSViewRepresentable {
         view.onEnded = onEnded
         view.onZoom = onZoom
         view.onPanBy = onPanBy
-        view.nodeTypes = nodeTypes
-        view.onAddNode = onAddNode
+        view.onRequestAddNode = onRequestAddNode
         view.isOverNode = isOverNode
     }
 }
@@ -273,18 +391,16 @@ struct CanvasMouseEventView: NSViewRepresentable {
 //   two-finger scroll        pan
 //   pinch or cmd+scroll      zoom about the cursor
 //   right-drag / MMB-drag    pan
-//   right-click empty space  add-node context menu at the cursor
+//   right-click empty space  request the canvas node picker at the cursor
 final class CanvasMouseEventNSView: NSView {
     var onChanged: ((CGSize) -> Void)?
     var onEnded: (() -> Void)?
     var onZoom: ((CGFloat, CGPoint) -> Void)?
     var onPanBy: ((CGSize) -> Void)?
-    var nodeTypes: [String] = []
-    var onAddNode: ((String, CGPoint) -> Void)?
+    var onRequestAddNode: ((CGPoint) -> Void)?
     var isOverNode: ((CGPoint) -> Bool)?
     private var start: NSPoint?
     private var dragDistance: CGFloat = 0
-    private var contextPoint: CGPoint = .zero
 
     override func hitTest(_ point: NSPoint) -> NSView? {
         guard let event = window?.currentEvent else { return nil }
@@ -309,7 +425,7 @@ final class CanvasMouseEventNSView: NSView {
     override func rightMouseUp(with event: NSEvent) {
         let wasClick = dragDistance < 4
         endDrag()
-        if wasClick { showAddMenu(with: event) }
+        if wasClick { onRequestAddNode?(localPoint(event)) }
     }
     override func otherMouseDown(with event: NSEvent) { beginDrag(event) }
     override func otherMouseDragged(with event: NSEvent) { dragged(event) }
@@ -351,39 +467,4 @@ final class CanvasMouseEventNSView: NSView {
         return CGPoint(x: local.x, y: bounds.height - local.y)
     }
 
-    private func showAddMenu(with event: NSEvent) {
-        guard !nodeTypes.isEmpty else { return }
-        contextPoint = localPoint(event)
-        let menu = NSMenu()
-        let header = NSMenuItem(title: "Add Node", action: nil, keyEquivalent: "")
-        header.isEnabled = false
-        menu.addItem(header)
-        menu.addItem(.separator())
-        let groups = NodeTypeCatalog.grouped(nodeTypes)
-        for (index, group) in groups.enumerated() {
-            if index > 0 {
-                menu.addItem(.separator())
-            }
-            let groupItem = NSMenuItem(title: group.title, action: nil, keyEquivalent: "")
-            groupItem.image = NSImage(systemSymbolName: group.systemImage,
-                                      accessibilityDescription: group.title)
-            groupItem.isEnabled = false
-            menu.addItem(groupItem)
-            for type in group.types {
-                let item = NSMenuItem(title: NodeTypeCatalog.title(for: type),
-                                      action: #selector(addNodeItem(_:)),
-                                      keyEquivalent: "")
-                item.indentationLevel = 1
-                item.representedObject = type
-                item.target = self
-                menu.addItem(item)
-            }
-        }
-        NSMenu.popUpContextMenu(menu, with: event, for: self)
-    }
-
-    @objc private func addNodeItem(_ sender: NSMenuItem) {
-        guard let type = sender.representedObject as? String else { return }
-        onAddNode?(type, contextPoint)
-    }
 }

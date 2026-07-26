@@ -38,10 +38,21 @@ struct GraphDocumentConnection: Codable, Identifiable, Equatable {
     }
 }
 
-enum GraphFieldKind: String, Codable {
+enum GraphFieldKind: String, Codable, CaseIterable {
     case terrain
     case mask
     case data
+}
+
+struct GraphInputPort: Identifiable, Equatable {
+    let index: UInt32
+    let name: String
+    let acceptedKinds: Set<GraphFieldKind>
+
+    var id: UInt32 { index }
+    var acceptsEveryKind: Bool {
+        acceptedKinds == Set(GraphFieldKind.allCases)
+    }
 }
 
 struct GraphOutputPort: Identifiable, Equatable {
@@ -56,6 +67,47 @@ struct GraphOutputPort: Identifiable, Equatable {
 struct GraphOutputReference: Codable, Hashable, Sendable {
     var node: String
     var output: String
+}
+
+enum GraphConnectionCompatibility: Equatable {
+    case compatible(replacesExisting: Bool)
+    case pending(message: String, replacesExisting: Bool)
+    case incompatible(message: String)
+
+    var isAllowed: Bool {
+        switch self {
+        case .compatible, .pending: return true
+        case .incompatible: return false
+        }
+    }
+
+    var replacesExisting: Bool {
+        switch self {
+        case .compatible(let replaces), .pending(_, let replaces):
+            return replaces
+        case .incompatible:
+            return false
+        }
+    }
+
+    var message: String? {
+        switch self {
+        case .compatible:
+            return nil
+        case .pending(let message, _), .incompatible(let message):
+            return message
+        }
+    }
+}
+
+struct GraphCompatibleNodeTarget: Identifiable, Equatable {
+    let nodeType: String
+    let input: GraphInputPort
+    let priority: Int
+    let reason: String
+
+    var id: String { "\(nodeType).\(input.index)" }
+    var isRecommended: Bool { priority < 20 }
 }
 
 struct GraphNodePosition: Codable, Equatable {
@@ -326,15 +378,18 @@ struct GraphDocument: Codable {
     }
 
     private mutating func migrateNamedOutputs() {
-        for index in connections.indices where connections[index].output.isEmpty {
+        for index in connections.indices {
             guard let source = node(id: connections[index].from) else { continue }
-            connections[index].output = Self.defaultOutputName(for: source.type)
+            connections[index].output = Self.canonicalOutputName(
+                connections[index].output, for: source.type)
         }
         if sink.isEmpty {
             sinkOutput = ""
         } else if let sinkNode = node(id: sink) {
             let names = Set(Self.outputPorts(for: sinkNode.type).map(\.name))
-            if sinkOutput.isEmpty || !names.contains(sinkOutput) {
+            sinkOutput = Self.canonicalOutputName(sinkOutput,
+                                                  for: sinkNode.type)
+            if !names.contains(sinkOutput) {
                 sinkOutput = Self.defaultOutputName(for: sinkNode.type)
             }
         }
@@ -551,9 +606,9 @@ struct GraphDocument: Codable {
     mutating func connect(from: String, output: String = "",
                           to: String, input: UInt32) {
         connections.removeAll { $0.to == to && $0.input == input }
-        let resolvedOutput = output.isEmpty
-            ? node(id: from).map { Self.defaultOutputName(for: $0.type) } ?? ""
-            : output
+        let resolvedOutput = node(id: from).map {
+            Self.canonicalOutputName(output, for: $0.type)
+        } ?? output
         let edge = GraphDocumentConnection(from: from, output: resolvedOutput,
                                            to: to, input: input)
         if !connections.contains(edge) {
@@ -581,6 +636,11 @@ struct GraphDocument: Codable {
         theia.graph_node_type_input_count(type)
     }
 
+    func inputPorts(nodeId: String) -> [GraphInputPort] {
+        guard let node = node(id: nodeId) else { return [] }
+        return Self.inputPorts(for: node.type)
+    }
+
     func node(id: String) -> GraphDocumentNode? {
         nodes.first { $0.id == id }
     }
@@ -594,10 +654,37 @@ struct GraphDocument: Codable {
         return Self.outputPorts(for: node.type)
     }
 
+    func possibleOutputKinds(
+        nodeId: String,
+        output: String,
+        visited: Set<GraphOutputReference> = []
+    ) -> Set<GraphFieldKind> {
+        guard let graphNode = node(id: nodeId) else { return [] }
+        let selected = Self.canonicalOutputName(output, for: graphNode.type)
+        let reference = GraphOutputReference(node: nodeId, output: selected)
+        guard !visited.contains(reference),
+              let port = Self.outputPorts(for: graphNode.type)
+                .first(where: { $0.name == selected }) else { return [] }
+        guard let inheritedInput = port.inheritInput else {
+            return [port.declaredKind]
+        }
+        guard let edge = connections.last(where: {
+            $0.to == nodeId && $0.input == UInt32(inheritedInput)
+        }) else {
+            return Self.inputPorts(for: graphNode.type)
+                .first(where: { $0.index == UInt32(inheritedInput) })?
+                .acceptedKinds ?? []
+        }
+        var nextVisited = visited
+        nextVisited.insert(reference)
+        return possibleOutputKinds(nodeId: edge.from, output: edge.output,
+                                   visited: nextVisited)
+    }
+
     func resolvedOutputKind(nodeId: String, output: String,
                             visited: Set<GraphOutputReference> = []) -> GraphFieldKind? {
         guard let graphNode = node(id: nodeId) else { return nil }
-        let selected = output.isEmpty ? Self.defaultOutputName(for: graphNode.type) : output
+        let selected = Self.canonicalOutputName(output, for: graphNode.type)
         let reference = GraphOutputReference(node: nodeId, output: selected)
         guard !visited.contains(reference),
               let port = Self.outputPorts(for: graphNode.type)
@@ -610,6 +697,193 @@ struct GraphDocument: Codable {
         nextVisited.insert(reference)
         return resolvedOutputKind(nodeId: edge.from, output: edge.output,
                                   visited: nextVisited)
+    }
+
+    func connectionCompatibility(
+        from source: GraphOutputReference,
+        to targetNodeId: String,
+        input targetInput: UInt32
+    ) -> GraphConnectionCompatibility {
+        guard source.node != targetNodeId else {
+            return .incompatible(message: "A node cannot connect to itself.")
+        }
+        guard let sourceNode = node(id: source.node) else {
+            return .incompatible(message: "The source output is unavailable.")
+        }
+        let sourceOutput = Self.canonicalOutputName(source.output,
+                                                    for: sourceNode.type)
+        guard
+              Self.outputPorts(for: sourceNode.type).contains(where: {
+                  $0.name == sourceOutput
+              }) else {
+            return .incompatible(message: "The source output is unavailable.")
+        }
+        guard let targetNode = node(id: targetNodeId),
+              let targetPort = Self.inputPorts(for: targetNode.type)
+                .first(where: { $0.index == targetInput }) else {
+            return .incompatible(message: "The target input is unavailable.")
+        }
+
+        let possibleKinds = possibleOutputKinds(nodeId: source.node,
+                                                output: sourceOutput)
+        guard !possibleKinds.isEmpty else {
+            return .incompatible(message: "The source output type could not be resolved.")
+        }
+        let replaces = connections.contains {
+            $0.to == targetNodeId && $0.input == targetInput
+        }
+        let kindLabel = possibleKinds.count == 1
+            ? possibleKinds.first!.rawValue
+            : "unresolved"
+
+        guard possibleKinds.isSubset(of: targetPort.acceptedKinds) else {
+            if possibleKinds.count > 1 {
+                return .incompatible(
+                    message: "\(sourceOutput) depends on an upstream type. Connect its upstream input before using \(targetNode.id).\(targetPort.name).")
+            }
+            return .incompatible(
+                message: "\(sourceOutput) is \(kindLabel); \(targetNode.id).\(targetPort.name) accepts \(Self.kindList(targetPort.acceptedKinds)).")
+        }
+
+        if targetNode.type == "combine" || targetNode.type == "blend" {
+            let siblingEdges = connections.filter {
+                $0.to == targetNodeId && $0.input != targetInput
+            }
+            for sibling in siblingEdges {
+                let siblingKinds = possibleOutputKinds(nodeId: sibling.from,
+                                                       output: sibling.output)
+                guard !siblingKinds.isEmpty else { continue }
+                if possibleKinds.isDisjoint(with: siblingKinds) {
+                    return .incompatible(
+                        message: "\(targetNode.id) requires matching field types on both inputs.")
+                }
+                if possibleKinds.count > 1 || siblingKinds.count > 1 {
+                    return .pending(
+                        message: "\(targetNode.id) will require both inputs to resolve to the same type.",
+                        replacesExisting: replaces)
+                }
+            }
+        }
+
+        if possibleKinds.count > 1 {
+            return .pending(
+                message: "\(sourceOutput) will inherit its type from the upstream connection.",
+                replacesExisting: replaces)
+        }
+        return .compatible(replacesExisting: replaces)
+    }
+
+    func compatibleNodeTargets(
+        from source: GraphOutputReference,
+        availableTypes: [String]
+    ) -> [GraphCompatibleNodeTarget] {
+        let possibleKinds = possibleOutputKinds(nodeId: source.node,
+                                                output: source.output)
+        guard !possibleKinds.isEmpty else { return [] }
+        let sourceType = node(id: source.node)?.type ?? ""
+        return availableTypes.compactMap { type in
+            let compatible = Self.inputPorts(for: type)
+                .filter { possibleKinds.isSubset(of: $0.acceptedKinds) }
+                .sorted {
+                    if $0.acceptedKinds.count != $1.acceptedKinds.count {
+                        return $0.acceptedKinds.count < $1.acceptedKinds.count
+                    }
+                    return $0.index < $1.index
+                }
+            guard let input = compatible.first else { return nil }
+            let recommendation = Self.contextualRecommendation(
+                sourceType: sourceType,
+                output: source.output,
+                kinds: possibleKinds,
+                targetType: type,
+                input: input)
+            return GraphCompatibleNodeTarget(
+                nodeType: type,
+                input: input,
+                priority: recommendation.priority,
+                reason: recommendation.reason)
+        }.sorted {
+            if $0.priority != $1.priority {
+                return $0.priority < $1.priority
+            }
+            return $0.nodeType.localizedCaseInsensitiveCompare($1.nodeType)
+                == .orderedAscending
+        }
+    }
+
+    private static func contextualRecommendation(
+        sourceType: String,
+        output: String,
+        kinds: Set<GraphFieldKind>,
+        targetType: String,
+        input: GraphInputPort
+    ) -> (priority: Int, reason: String) {
+        let onlyKind = kinds.count == 1 ? kinds.first : nil
+        var ranked: [(String, String)]
+
+        if output == "flow" {
+            ranked = [
+                ("rivercarve", "Use flow as a carve mask"),
+                ("remap", "Shape the flow range"),
+                ("normalize", "Normalize the flow map"),
+                ("clamp", "Limit the flow range"),
+                ("blur", "Smooth the flow map"),
+                ("invert", "Invert the flow map"),
+                ("export", "Export the flow map")
+            ]
+        } else if output == "ridge" {
+            ranked = [
+                ("remap", "Shape the ridge range"),
+                ("normalize", "Normalize the ridge map"),
+                ("clamp", "Limit the ridge range"),
+                ("blur", "Smooth the ridge map"),
+                ("invert", "Invert the ridge map"),
+                ("export", "Export the ridge map")
+            ]
+        } else if onlyKind == .mask || output == "mask" {
+            ranked = [
+                ("rivercarve", "Use mask to carve terrain"),
+                ("invert", "Invert the mask"),
+                ("remap", "Shape the mask range"),
+                ("blur", "Soften the mask"),
+                ("clamp", "Limit the mask range"),
+                ("normalize", "Normalize the mask"),
+                ("export", "Export the mask")
+            ]
+        } else if onlyKind == .terrain {
+            ranked = [
+                ("thermal", "Add thermal erosion"),
+                ("fluvial", "Add fluvial erosion"),
+                ("erosionfilter", "Extract terrain ridges"),
+                ("terrace", "Create stepped terrain"),
+                ("warp", "Distort terrain features"),
+                ("river", "Derive a river mask"),
+                ("slopemask", "Derive a slope mask"),
+                ("rivercarve", "Use as carve terrain"),
+                ("export", "Export the terrain")
+            ]
+        } else {
+            ranked = [
+                ("remap", "Shape the field range"),
+                ("normalize", "Normalize the field"),
+                ("clamp", "Limit the field range"),
+                ("blur", "Smooth the field"),
+                ("invert", "Invert the field"),
+                ("export", "Export the field")
+            ]
+        }
+
+        if let index = ranked.firstIndex(where: { $0.0 == targetType }) {
+            let repeatedPenalty = targetType == sourceType ? 20 : 0
+            return (index + repeatedPenalty, ranked[index].1)
+        }
+        if targetType == "combine" || targetType == "blend" {
+            return (24, "Combine with another \(onlyKind?.rawValue ?? "field")")
+        }
+        let accepted = input.acceptsEveryKind
+            ? "Continue processing this field"
+            : "Connect to \(input.name)"
+        return (40, accepted)
     }
 
     func terrainReference(for reference: GraphOutputReference,
@@ -644,9 +918,12 @@ struct GraphDocument: Codable {
         _ reference: GraphOutputReference,
         visiting: Set<String>
     ) -> Bool {
-        guard let graphNode = node(id: reference.node),
+        guard let graphNode = node(id: reference.node) else { return false }
+        let canonicalOutput = Self.canonicalOutputName(reference.output,
+                                                       for: graphNode.type)
+        guard
               Self.outputPorts(for: graphNode.type).contains(where: {
-                  $0.name == reference.output
+                  $0.name == canonicalOutput
               }),
               !visiting.contains(reference.node) else { return false }
 
@@ -682,8 +959,9 @@ struct GraphDocument: Codable {
             return
         }
         let names = Set(Self.outputPorts(for: type).map(\.name))
-        sinkOutput = !output.isEmpty && names.contains(output)
-            ? output : Self.defaultOutputName(for: type)
+        let canonical = Self.canonicalOutputName(output, for: type)
+        sinkOutput = names.contains(canonical)
+            ? canonical : Self.defaultOutputName(for: type)
     }
 
     static func outputPorts(for type: String) -> [GraphOutputPort] {
@@ -706,18 +984,54 @@ struct GraphDocument: Codable {
         }
     }
 
+    static func inputPorts(for type: String) -> [GraphInputPort] {
+        let count = theia.graph_node_type_input_count(type)
+        return (0..<count).map { index in
+            let name = readCxxString {
+                theia.graph_node_type_input_name(type, index, $0, $1)
+            }
+            let kinds = Set(readCxxString {
+                theia.graph_node_type_input_kinds(type, index, $0, $1)
+            }.split(separator: ",").compactMap {
+                GraphFieldKind(rawValue: String($0))
+            })
+            return GraphInputPort(index: index,
+                                  name: name.isEmpty ? "input\(index)" : name,
+                                  acceptedKinds: kinds)
+        }
+    }
+
     private static func inputKinds(for type: String,
                                    input: UInt32) -> Set<GraphFieldKind> {
-        Set(readCxxString {
-            theia.graph_node_type_input_kinds(type, input, $0, $1)
-        }.split(separator: ",").compactMap {
-            GraphFieldKind(rawValue: String($0))
-        })
+        inputPorts(for: type)
+            .first(where: { $0.index == input })?.acceptedKinds ?? []
+    }
+
+    private static func kindList(_ kinds: Set<GraphFieldKind>) -> String {
+        GraphFieldKind.allCases
+            .filter(kinds.contains)
+            .map(\.rawValue)
+            .joined(separator: "/")
     }
 
     static func defaultOutputName(for type: String) -> String {
         let ports = outputPorts(for: type)
         return ports.first(where: \.isDefault)?.name ?? ports.first?.name ?? ""
+    }
+
+    static func canonicalOutputName(_ authoredName: String,
+                                    for type: String) -> String {
+        if authoredName.isEmpty { return defaultOutputName(for: type) }
+        if authoredName == "height" {
+            let ports = outputPorts(for: type)
+            if !ports.contains(where: { $0.name == "height" }),
+               ports.contains(where: {
+                   $0.name == "terrain" && $0.declaredKind == .terrain
+               }) {
+                return "terrain"
+            }
+        }
+        return authoredName
     }
 
     static func defaultParams(for type: String) -> [String: Double] {

@@ -45,6 +45,24 @@ Theia is split into a portable graph engine and two Swift front ends.
   Non-terrain fields reuse a
   terrain output from the same node, or the nearest upstream terrain, as mesh
   geometry. Auto mode follows the resolved field kind.
+- The graph canvas resolves inherited field kinds before authoring a connection.
+  It rejects known type mismatches without mutating the document, preserves
+  unresolved sources only for universally compatible inputs, and uses the same
+  compatibility model to filter the contextual node picker. Terrain ports use
+  `terrain` on both sides of a connection; generic field transforms use
+  `field`, and binary operations use `base`/`source`. The loader accepts the
+  legacy terrain-output name `height` and normalizes it on the next save.
+- Contextual suggestions are ranked using both the resolved field kind and the
+  semantic output (`flow`, `ridge`, or `mask`), so recommended next operations
+  appear before the complete compatible list.
+- Right-click creation and connection-drop creation share one bounded,
+  searchable picker. Its placement scores nearby candidate rectangles to avoid
+  obscuring existing nodes, especially the source node. Canvas cards show one
+  readable instance title; the type remains available through its icon and
+  hover description instead of a duplicate second caption.
+  The picker remains cursor-anchored on both axes and scrolls a deliberately
+  limited set of visible rows. Connection-drop mode retains the temporary wire
+  until the user chooses a target or dismisses the picker.
 - `TerrainEngine` is retained for synchronous validation and explicit save.
 - `Renderer`, `TerrainSurfacePicker`, and `TerrainShaders` own rendering and
   surface-aware viewport interaction.

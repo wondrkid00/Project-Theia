@@ -93,6 +93,23 @@ double jsonParamValue(const json& params, const char* key, double fallback) {
     return params[key].get<double>();
 }
 
+std::string canonicalOutputName(
+    const std::vector<OutputPortDescriptor>& ports,
+    const std::string& authoredName
+) {
+    if (authoredName != "height") return authoredName;
+    const bool stillHasHeight = std::any_of(
+        ports.begin(), ports.end(),
+        [](const OutputPortDescriptor& port) { return port.name == "height"; });
+    if (stillHasHeight) return authoredName;
+    const auto terrain = std::find_if(
+        ports.begin(), ports.end(),
+        [](const OutputPortDescriptor& port) {
+            return port.name == "terrain" && port.kind == FieldKind::terrain;
+        });
+    return terrain == ports.end() ? authoredName : terrain->name;
+}
+
 std::string makeDiagnosticsJSON(const std::string& text) {
     struct DiagnosticSource {
         std::string node;
@@ -258,6 +275,8 @@ std::string makeDiagnosticsJSON(const std::string& text) {
                         auto it = std::find_if(ports.begin(), ports.end(),
                             [](const OutputPortDescriptor& p) { return p.isDefault; });
                         if (it != ports.end()) output = it->name;
+                    } else {
+                        output = canonicalOutputName(ports, output);
                     }
                     const bool known = std::any_of(ports.begin(), ports.end(),
                         [&](const OutputPortDescriptor& p) { return p.name == output; });
@@ -323,6 +342,8 @@ std::string makeDiagnosticsJSON(const std::string& text) {
                 auto it = std::find_if(ports.begin(), ports.end(),
                     [](const OutputPortDescriptor& p) { return p.isDefault; });
                 if (it != ports.end()) sinkOutput = it->name;
+            } else {
+                sinkOutput = canonicalOutputName(ports, sinkOutput);
             }
             if (!std::any_of(ports.begin(), ports.end(),
                     [&](const OutputPortDescriptor& p) { return p.name == sinkOutput; })) {
