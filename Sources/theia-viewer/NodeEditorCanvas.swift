@@ -98,14 +98,11 @@ struct NodeTypeGroup: Identifiable {
 enum NodeTypeCatalog {
     static let terrainTypes = [
         "rollinghills", "mountain", "mountainrange", "canyon",
-        "crater", "dunesea", "mountainside",
-        "ridge", "rugged", "slump", "uplift", "volcano",
+        "crater", "volcano",
     ]
     static let quickStartTypes = [
         "rollinghills", "mountain", "mountainrange", "canyon",
     ]
-
-    private static let hiddenTypes: Set<String> = ["ridged"]
 
     private static let groups: [NodeTypeGroup] = [
         NodeTypeGroup(id: "terrain", title: "Terrain", systemImage: "mountain.2",
@@ -135,7 +132,7 @@ enum NodeTypeCatalog {
     ]
 
     static func grouped(_ availableTypes: [String]) -> [NodeTypeGroup] {
-        let available = Set(availableTypes.filter(isPresented))
+        let available = Set(availableTypes)
         var used = Set<String>()
         var result: [NodeTypeGroup] = []
         for group in groups {
@@ -147,9 +144,7 @@ enum NodeTypeCatalog {
                                         systemImage: group.systemImage,
                                         types: types))
         }
-        let uncategorized = availableTypes.filter {
-            isPresented($0) && !used.contains($0)
-        }
+        let uncategorized = availableTypes.filter { !used.contains($0) }
         if !uncategorized.isEmpty {
             result.append(NodeTypeGroup(id: "other",
                                         title: "Other",
@@ -183,8 +178,6 @@ enum NodeTypeCatalog {
         switch type {
         case "rollinghills": return "Rolling Hills"
         case "mountainrange": return "Mountain Range"
-        case "dunesea": return "Dune Sea"
-        case "mountainside": return "Mountain Side"
         case "scalebias": return "Scale Bias"
         case "dropleterosion": return "Droplet Erosion"
         case "erosionfilter": return "Erosion Filter"
@@ -204,12 +197,6 @@ enum NodeTypeCatalog {
         case "mountainrange": return "mountain.2"
         case "canyon": return "arrow.down.to.line.compact"
         case "crater": return "circle.circle"
-        case "dunesea": return "water.waves"
-        case "mountainside": return "triangle.lefthalf.filled"
-        case "ridge": return "waveform.path.ecg"
-        case "rugged": return "bolt.horizontal.circle"
-        case "slump": return "arrow.down.right.circle"
-        case "uplift": return "arrow.up.circle"
         case "volcano": return "triangle.fill"
         case "perlin": return "waveform.path.ecg"
         default:
@@ -225,19 +212,9 @@ enum NodeTypeCatalog {
         case "mountainrange": return "Connected mountain chain"
         case "canyon": return "Incised canyon network"
         case "crater": return "Single impact basin"
-        case "dunesea": return "Wind-shaped dune field"
-        case "mountainside": return "Directional mountain slope"
-        case "ridge": return "Linear ridge crest"
-        case "rugged": return "Broken rocky terrain"
-        case "slump": return "Downslope mass movement"
-        case "uplift": return "Broad tectonic rise"
         case "volcano": return "Volcanic cone and crater"
         default: return title(for: type)
         }
-    }
-
-    static func isPresented(_ type: String) -> Bool {
-        !hiddenTypes.contains(type)
     }
 
     static func nodeTitle(id: String, type: String) -> String {
@@ -861,11 +838,8 @@ private struct NodeSelectionWindow: View {
     private var visibleTargets: [GraphCompatibleNodeTarget] {
         let query = searchText.trimmingCharacters(
             in: .whitespacesAndNewlines).lowercased()
-        let presented = targets.filter {
-            NodeTypeCatalog.isPresented($0.nodeType)
-        }
-        guard !query.isEmpty else { return presented }
-        return presented.filter { target in
+        guard !query.isEmpty else { return targets }
+        return targets.filter { target in
             target.nodeType.lowercased().contains(query) ||
                 NodeTypeCatalog.title(for: target.nodeType)
                     .lowercased().contains(query) ||

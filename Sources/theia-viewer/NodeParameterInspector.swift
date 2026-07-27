@@ -320,17 +320,6 @@ private struct NodePresentation {
             return terrain(type, tint: .orange)
         case "crater":
             return terrain(type, tint: .gray)
-        case "dunesea":
-            return terrain(type, tint: .yellow)
-        case "mountainside", "rugged":
-            return terrain(type, tint: .brown)
-            return terrain(type, tint: .teal)
-        case "ridge":
-            return terrain(type, tint: .purple)
-        case "slump":
-            return terrain(type, tint: .orange)
-        case "uplift":
-            return terrain(type, tint: .green)
         case "volcano":
             return terrain(type, tint: .red)
         case "perlin":
@@ -559,47 +548,25 @@ enum TerrainParameterCatalog {
     private static let parameterOrder: [String: [String]] = [
         "rollinghills": [
             "scale", "height", "softness", "undulation",
-            "warp", "seed",
+            "detail", "warp", "seed",
         ],
         "mountain": [
             "scale", "height", "bulk",
-            "roughness", "warp", "x", "y", "seed",
+            "roughness", "surroundings", "warp", "x", "y", "seed",
         ],
         "mountainrange": [
             "scale", "height", "length", "width", "direction",
-            "peaks", "roughness", "warp", "x", "y", "seed",
+            "peaks", "peakVariation", "arc", "sinuosity",
+            "roughness", "surroundings", "warp", "x", "y", "seed",
         ],
         "canyon": [
             "scale", "height", "depth", "width",
-            "branches", "wallSharpness", "roughness", "seed",
+            "branches", "wallSharpness", "benching", "roughness", "seed",
         ],
         "crater": [
-            "scale", "height", "depth", "rimHeight",
-            "rimWidth", "irregularity", "ejecta", "x", "y", "seed",
-        ],
-        "dunesea": [
-            "scale", "height", "direction", "asymmetry",
-            "sharpness", "chaos", "warp", "seed",
-        ],
-        "mountainside": [
-            "scale", "height", "slope", "direction",
-            "peak", "detail", "warp", "x", "y", "seed",
-        ],
-        "ridge": [
-            "scale", "height", "length", "width", "direction",
-            "definition", "fractures", "warp", "x", "y", "seed",
-        ],
-        "rugged": [
-            "scale", "height", "bulk",
-            "roughness", "fractures", "warp", "seed",
-        ],
-        "slump": [
-            "scale", "height", "collapse", "direction",
-            "softness", "lobes", "warp", "seed",
-        ],
-        "uplift": [
-            "scale", "height", "direction", "folds",
-            "foldWidth", "jitter", "roughness", "seed",
+            "scale", "height", "depth", "complexity", "rimHeight",
+            "rimWidth", "terraces", "irregularity", "ejecta",
+            "surroundings", "x", "y", "seed",
         ],
         "volcano": [
             "scale", "height", "mouth", "calderaDepth",
@@ -612,13 +579,7 @@ enum TerrainParameterCatalog {
         "mountain": ["scale", "height", "bulk"],
         "mountainrange": ["scale", "height", "length", "width", "direction"],
         "canyon": ["scale", "height", "depth", "width"],
-        "crater": ["scale", "height", "depth", "rimHeight"],
-        "dunesea": ["scale", "height", "direction", "asymmetry"],
-        "mountainside": ["scale", "height", "slope", "direction"],
-        "ridge": ["scale", "height", "length", "width", "direction"],
-        "rugged": ["scale", "height", "bulk"],
-        "slump": ["scale", "height", "collapse", "direction"],
-        "uplift": ["scale", "height", "direction", "folds"],
+        "crater": ["scale", "height", "depth", "complexity", "rimHeight"],
         "volcano": ["scale", "height", "mouth", "calderaDepth"],
     ]
 
@@ -680,14 +641,12 @@ private struct ParameterPresentation {
             case "height": return "Relief"
             case "x": return "Center X"
             case "y": return "Center Y"
-            case "boundaryUplift": return "Boundary Uplift"
             case "wallSharpness": return "Wall Sharpness"
             case "rimHeight": return "Rim Height"
             case "rimWidth": return "Rim Width"
-            case "sizeVariation": return "Size Variation"
-            case "foldWidth": return "Fold Width"
             case "calderaDepth": return "Caldera Depth"
             case "radialErosion": return "Radial Erosion"
+            case "peakVariation": return "Peak Variation"
             default: break
             }
         }
@@ -763,32 +722,21 @@ private struct ParameterPresentation {
                     ? "Sets the canyon channel width."
                     : "Sets the landform band width."
             case "peaks": return "Sets the number of major summits."
+            case "peakVariation": return "Varies summit spacing, width, and height."
+            case "arc": return "Bows the mountain range to either side."
+            case "sinuosity": return "Adds broad bends along the range."
             case "depth": return "Controls basin or canyon incision."
             case "branches": return "Sets the number of canyon tributaries."
             case "wallSharpness": return "Hardens canyon walls and breaks."
+            case "benching": return "Adds weathered steps to canyon walls."
             case "rimHeight": return "Raises the crater rim above its surroundings."
             case "rimWidth": return "Sets the crater rim thickness."
             case "irregularity": return "Distorts otherwise circular impacts."
             case "ejecta": return "Adds material radiating beyond the rim."
-            case "density": return "Sets the number of visible impacts."
-            case "sizeVariation": return "Varies crater sizes across the field."
-            case "age": return "Softens and wears older crater forms."
-            case "asymmetry": return "Offsets windward and slip-face slopes."
-            case "sharpness": return "Hardens dune crests."
-            case "chaos": return "Breaks the regular dune pattern."
-            case "slope": return "Sets the main mountainside grade."
-            case "peak": return "Positions the upper mountain influence."
-            case "detail": return "Adds secondary slope features."
-            case "flatness": return "Flattens plate interiors."
-            case "boundaryUplift": return "Raises relief along plate boundaries."
-            case "tilt": return "Offsets plate interiors with broad tilting."
-            case "definition": return "Sharpens the ridge crest."
-            case "fractures": return "Cuts broken seams through the surface."
-            case "collapse": return "Controls downslope failure."
-            case "lobes": return "Sets the number of depositional lobes."
-            case "folds": return "Sets the number of uplift folds."
-            case "foldWidth": return "Sets the width of individual folds."
-            case "jitter": return "Offsets fold spacing and alignment."
+            case "complexity": return "Morphs from a simple bowl to a complex crater."
+            case "terraces": return "Adds stepped walls to complex craters."
+            case "surroundings": return "Adds low relief around the main landform."
+            case "detail": return "Adds finer structure to rolling hills."
             case "mouth": return "Sets the summit opening size."
             case "calderaDepth": return "Lowers the volcanic caldera."
             case "radialErosion": return "Cuts channels away from the summit."
@@ -917,9 +865,9 @@ private struct ParameterPresentation {
         case "x": return "arrow.left.and.right"
         case "y": return "arrow.up.and.down"
         case "length": return "arrow.left.and.right"
-        case "branches", "peaks", "density", "lobes", "folds":
+        case "branches", "peaks":
             return "number"
-        case "roughness", "fractures", "irregularity", "chaos":
+        case "roughness", "irregularity":
             return "scribble.variable"
         case "frequency": return "waveform.path.ecg"
         case "gain": return "chart.line.uptrend.xyaxis"
@@ -1162,21 +1110,16 @@ struct SliderConfig {
                 return SliderConfig(range: 0.02...0.6, step: 0.01, precision: 2)
             case "branches":
                 return SliderConfig(range: 1...32, step: 1, precision: 0)
-            case "density":
-                return SliderConfig(range: 1...64, step: 1, precision: 0)
-            case "peaks", "folds":
+            case "peaks":
                 return SliderConfig(range: 1...12, step: 1, precision: 0)
-            case "lobes":
-                return SliderConfig(range: 1...8, step: 1, precision: 0)
-            case "foldWidth":
-                return SliderConfig(range: 0.01...0.5, step: 0.01, precision: 2)
+            case "arc":
+                return SliderConfig(range: -1...1, step: 0.01, precision: 2)
             case "height", "softness", "undulation", "warp", "bulk",
                  "roughness", "depth", "wallSharpness", "rimHeight",
-                 "rimWidth", "irregularity", "ejecta", "sizeVariation",
-                 "age", "asymmetry", "sharpness", "chaos", "slope",
-                 "peak", "detail", "flatness", "boundaryUplift", "tilt",
-                 "definition", "fractures", "collapse", "jitter", "mouth",
-                 "calderaDepth", "radialErosion":
+                 "rimWidth", "irregularity", "ejecta", "detail",
+                 "benching", "surroundings", "peakVariation", "sinuosity",
+                 "complexity", "terraces", "mouth", "calderaDepth",
+                 "radialErosion":
                 return SliderConfig(range: 0...1, step: 0.01, precision: 2)
             default:
                 break

@@ -100,10 +100,10 @@ swift run theia-tests
 
 Current release: **0.12.0-alpha.1**
 
-Theia already supports a complete procedural terrain loop: node authoring, an
-expanded library of mountains, ridges, canyons, craters, dunes, and other
-terrain primitives, GPU-backed generation, erosion and river systems, typed
-multi-output fields, mask editing, 3D preview, and engine-ready export.
+Theia already supports a complete procedural terrain loop: node authoring,
+GPU-backed rolling hills, canyons, craters, mountains, mountain ranges, and
+volcanoes, erosion and river systems, typed multi-output fields, mask editing,
+3D preview, and engine-ready export.
 
 The next horizon is broader biome workflows and new physically informed
 simulations.

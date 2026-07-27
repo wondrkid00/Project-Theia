@@ -1645,7 +1645,7 @@ func p4JSON(type: String, params: String = "{}", inputCount: Int = 1) -> String 
     } else if inputCount == 2 {
         nodes = """
         { "id": "a", "type": "perlin", "params": { "seed": 11, "frequency": 5.0 } },
-        { "id": "b", "type": "rugged", "params": { "seed": 21 } },
+        { "id": "b", "type": "perlin", "params": { "seed": 21, "frequency": 9 } },
         { "id": "n", "type": "\(type)", "params": \(params) }
         """
         connections = """
@@ -1680,12 +1680,6 @@ let terrainPrimitiveDefaults: [(type: String, params: [(String, Double)])] = [
         ("ejecta", 0.35), ("x", 0), ("y", 0), ("complexity", 0.30),
         ("terraces", 0.50), ("surroundings", 0.30), ("seed", 1337)
     ]),
-    ("dunesea", [
-        ("scale", 0.18), ("height", 0.42), ("direction", 0),
-        ("asymmetry", 0.65), ("sharpness", 0.55), ("chaos", 0.25),
-        ("warp", 0.15), ("crestMeander", 0.55), ("defects", 0.45),
-        ("seed", 1337)
-    ]),
     ("mountain", [
         ("scale", 0.65), ("height", 0.90), ("bulk", 0.58),
         ("roughness", 0.38), ("warp", 0.20), ("x", 0), ("y", 0),
@@ -1698,37 +1692,16 @@ let terrainPrimitiveDefaults: [(type: String, params: [(String, Double)])] = [
         ("surroundings", 0.30), ("peakVariation", 0.65),
         ("arc", 0.35), ("sinuosity", 0.45), ("seed", 1337)
     ]),
-    ("mountainside", [
-        ("scale", 0.90), ("height", 0.85), ("slope", 0.65),
-        ("direction", 25), ("peak", 0.50), ("detail", 0.35),
-        ("warp", 0.15), ("x", 0), ("y", 0), ("seed", 1337)
-    ]),
-    ("ridge", [
-        ("scale", 0.75), ("height", 0.85), ("length", 1.30),
-        ("width", 0.12), ("direction", 20), ("definition", 0.70),
-        ("fractures", 0.35), ("warp", 0.25), ("x", 0), ("y", 0),
-        ("seed", 1337)
-    ]),
-    ("rugged", [
-        ("scale", 0.55), ("height", 0.85), ("bulk", 0.60),
-        ("roughness", 0.70), ("fractures", 0.45), ("warp", 0.25),
-        ("seed", 1337)
-    ]),
-    ("slump", [
-        ("scale", 0.65), ("height", 0.65), ("collapse", 0.45),
-        ("direction", 20), ("softness", 0.55), ("lobes", 4),
-        ("warp", 0.15), ("seed", 1337)
-    ]),
-    ("uplift", [
-        ("scale", 0.70), ("height", 0.85), ("direction", 20), ("folds", 5),
-        ("foldWidth", 0.12), ("jitter", 0.25), ("roughness", 0.30),
-        ("seed", 1337)
-    ]),
     ("volcano", [
         ("scale", 0.55), ("height", 0.90), ("mouth", 0.22),
         ("calderaDepth", 0.45), ("bulk", 0.60), ("radialErosion", 0.35),
         ("roughness", 0.30), ("x", 0), ("y", 0), ("seed", 1337)
     ])
+]
+
+let retiredTerrainPrimitiveTypes = [
+    "ridged", "craterfield", "plates", "dunesea", "mountainside",
+    "ridge", "rugged", "slump", "uplift",
 ]
 
 func primitiveJSON(_ type: String, params: String = "{}",
@@ -1749,7 +1722,10 @@ h.test("Terrain primitive library is registered with exact defaults") {
     let registered = Set(readCxxString { theia.node_type_list($0, $1) }
         .split(separator: ",")
         .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) })
-    h.expect(!registered.contains("ridged"), "retired ridged generator is still registered")
+    for type in retiredTerrainPrimitiveTypes {
+        h.expect(!registered.contains(type),
+                 "retired \(type) generator is still registered")
+    }
 
     for primitive in terrainPrimitiveDefaults {
         let type = primitive.type
@@ -1784,22 +1760,24 @@ h.test("Terrain primitive library is registered with exact defaults") {
     }
 }
 
-h.test("Legacy ridged JSON is rejected while erosionfilter.ridge remains available") {
+h.test("Retired terrain JSON is rejected while erosionfilter.ridge remains available") {
     guard let g = theia.graph_create() else { h.expect(false, "create"); return }
     defer { theia.graph_destroy(g) }
-    let legacy = """
-    {
-      "sink": "legacy",
-      "nodes": [
-        { "id": "legacy", "type": "ridged", "params": { "seed": 1337 } }
-      ],
-      "connections": []
+    for type in retiredTerrainPrimitiveTypes {
+        let legacy = """
+        {
+          "sink": "legacy",
+          "nodes": [
+            { "id": "legacy", "type": "\(type)", "params": { "seed": 1337 } }
+          ],
+          "connections": []
+        }
+        """
+        h.expect(!theia.graph_load_json_text(g, legacy),
+                 "retired \(type) JSON should not load")
+        h.expect(graphError(g).lowercased().contains("unknown"),
+                 "\(type) rejection should identify an unknown node: \(graphError(g))")
     }
-    """
-    h.expect(!theia.graph_load_json_text(g, legacy),
-             "retired ridged JSON should not load")
-    h.expect(graphError(g).lowercased().contains("unknown"),
-             "ridged rejection should identify an unknown node: \(graphError(g))")
     h.expect(theia.graph_node_type_output_count("erosionfilter") == 2,
              "erosionfilter outputs were removed with ridged")
     let ridge = readCxxString {
@@ -1931,21 +1909,17 @@ h.test("Terrain primitive parameter families clamp at their public limits") {
         ("rollinghills", "scale", 1.5, 10),
         ("canyon", "depth", 0, -10),
         ("canyon", "depth", 1, 10),
-        ("dunesea", "direction", 0, -720),
-        ("dunesea", "direction", 360, 720),
         ("crater", "x", -1, -10),
         ("crater", "y", 1, 10),
-        ("ridge", "length", 0.25, -10),
-        ("ridge", "width", 0.6, 10),
+        ("crater", "complexity", 1, 10),
         ("canyon", "branches", 1, -10),
         ("canyon", "branches", 32, 100),
+        ("canyon", "benching", 1, 10),
         ("mountainrange", "peaks", 12, 100),
-        ("slump", "lobes", 8, 100),
-        ("uplift", "folds", 12, 100),
-        ("uplift", "foldWidth", 0.01, -10),
-        ("uplift", "foldWidth", 0.5, 10),
-        ("rugged", "seed", 0, -10),
-        ("rugged", "seed", 9999, 100000)
+        ("mountainrange", "arc", -1, -10),
+        ("mountainrange", "arc", 1, 10),
+        ("volcano", "seed", 0, -10),
+        ("volcano", "seed", 9999, 100000)
     ]
     for (type, name, limit, outside) in clamps {
         let atLimit = primitiveParamOutput(type, name, limit)
@@ -2130,7 +2104,7 @@ h.test("Terrain primitives are consistent at 128, 256, and 512 samples") {
 }
 
 h.test("Directional terrain primitives rotate their anisotropy") {
-    for type in ["dunesea", "mountainrange", "mountainside", "ridge", "uplift"] {
+    for type in ["mountainrange"] {
         let zero = evalGraphHeightsJSON(
             primitiveJSON(type, params: "{ \"seed\": 404, \"direction\": 0 }",
                           size: 96),
@@ -2167,62 +2141,20 @@ h.test("Mountain range peak count changes its summit rhythm") {
              "mountainrange.peaks should reshape the summit chain")
 }
 
-h.test("Rolling hills are lower-frequency than rugged terrain") {
-    let rolling = evalGraphHeightsJSON(
-        primitiveJSON("rollinghills", params: "{ \"seed\": 919 }", size: 128),
+h.test("Rolling hills detail extends the surface spectrum") {
+    let smooth = evalGraphHeightsJSON(
+        primitiveJSON("rollinghills",
+                      params: "{ \"seed\": 919, \"detail\": 0 }", size: 128),
         sink: "terrain", size: 128)
-    let rugged = evalGraphHeightsJSON(
-        primitiveJSON("rugged", params: "{ \"seed\": 919 }", size: 128),
+    let detailed = evalGraphHeightsJSON(
+        primitiveJSON("rollinghills",
+                      params: "{ \"seed\": 919, \"detail\": 1 }", size: 128),
         sink: "terrain", size: 128)
-    let rollingDetail = curvaturePercentile(rolling, size: 128, percentile: 0.75)
-    let ruggedDetail = curvaturePercentile(rugged, size: 128, percentile: 0.75)
-    h.expect(ruggedDetail > rollingDetail * 1.35 + 0.0005,
-             "rugged detail \(ruggedDetail) did not exceed rolling \(rollingDetail)")
-}
-
-h.test("Slump direction and lobe count control its structure") {
-    @MainActor
-    func slump(_ direction: Int, _ lobes: Int) -> [Float] {
-        evalGraphHeightsJSON(
-            primitiveJSON(
-                "slump",
-                params: "{ \"seed\": 122, \"direction\": \(direction), \"lobes\": \(lobes) }",
-                size: 96),
-            sink: "terrain", size: 96)
-    }
-    let a = slump(0, 2)
-    let b = slump(90, 2)
-    let many = slump(0, 7)
-    let av = directionalVariation(a, width: 96)
-    let bv = directionalVariation(b, width: 96)
-    h.expect(abs(av.0 - av.1) > 0.001, "slump should be anisotropic")
-    h.expect((av.0 - av.1) * (bv.0 - bv.1) < 0,
-             "slump direction should rotate its structure")
-    h.expect(meanAbsoluteDifference(a, many) > 0.005,
-             "slump lobe count should affect deposits")
-}
-
-h.test("Dune sea crests do not tile") {
-    let size = 192
-    // Hashing per crest index gave each dune a constant, so the value jumped at
-    // every phase wrap and the field rendered as rectangular tiles. Detect a
-    // seam as a column whose neighbours differ far more than the field's own
-    // typical horizontal step.
-    let dunes = evalGraphHeightsJSON(
-        primitiveJSON("dunesea", params: "{ \"seed\": 404 }", size: size),
-        sink: "terrain", size: UInt32(size))
-    h.expect(dunes.count == size * size, "dune sea must evaluate")
-    var steps: [Float] = []
-    for y in 0..<size {
-        for x in 1..<size {
-            steps.append(abs(dunes[y * size + x] - dunes[y * size + x - 1]))
-        }
-    }
-    steps.sort()
-    let median = steps[steps.count / 2]
-    let worst = steps[steps.count - 1]
-    h.expect(worst < max(median, 1e-5) * 90,
-             "dune sea has a hard seam: peak step \(worst) vs median \(median)")
+    let smoothDetail = curvaturePercentile(smooth, size: 128, percentile: 0.75)
+    let highDetail = curvaturePercentile(detailed, size: 128, percentile: 0.75)
+    h.expect(highDetail > smoothDetail * 1.05,
+             "rollinghills.detail should add fine structure: "
+             + "\(smoothDetail) -> \(highDetail)")
 }
 
 h.test("Landform primitives sit in terrain rather than on a flat plane") {
@@ -2375,11 +2307,10 @@ h.test("Canyon depth carves a substantially connected network") {
 
 h.test("Foundation node types are registered and expose defaults") {
     let types = readCxxString { theia.node_type_list($0, $1) }
-    for type in ["rugged", "invert", "clamp", "remap", "blur", "warp", "blend"] {
+    for type in ["invert", "clamp", "remap", "blur", "warp", "blend"] {
         h.expect(types.contains(type), "\(type) missing from node_type_list: \(types)")
         h.expect(theia.graph_default_param_count(type) > 0, "\(type) should expose defaults")
     }
-    h.expect(theia.graph_node_type_input_count("rugged") == 0, "rugged input count")
     h.expect(theia.graph_node_type_input_count("blend") == 2, "blend input count")
     h.expect(theia.graph_default_param_value("blend", "opacity", -1) == 1.0,
              "blend opacity default")
@@ -2387,7 +2318,6 @@ h.test("Foundation node types are registered and expose defaults") {
 
 h.test("Foundation nodes evaluate valid normalized terrain") {
     let cases: [(String, String, Int)] = [
-        ("rugged", "{ \"seed\": 44 }", 0),
         ("invert", "{ \"amount\": 1.0 }", 1),
         ("clamp", "{ \"min\": 0.2, \"max\": 0.8 }", 1),
         ("remap", "{ \"inLow\": 0.2, \"inHigh\": 0.8, \"gamma\": 0.8 }", 1),
@@ -3283,7 +3213,7 @@ h.test("River node responds to combined upstream terrain") {
         { "id": "a", "type": "perlin", "params": {
           "seed": 91, "frequency": 4.5, "octaves": 6, "heightScale": 1.0
         } },
-        { "id": "b", "type": "rugged", "params": { "seed": 229 } },
+        { "id": "b", "type": "rollinghills", "params": { "seed": 229 } },
         { "id": "blend", "type": "blend", "params": {
           "mode": 1, "opacity": 0.42
         } },
@@ -3493,11 +3423,11 @@ h.test("CLI JSON commands are parseable and unknown options exit 2") {
     h.expect(actualTypes.allSatisfy { $0 == $0.trimmingCharacters(in: .whitespacesAndNewlines) },
              "node types must not contain surrounding whitespace")
     let combine = nodeList.first { ($0["type"] as? String) == "combine" }
-    let rugged = nodeList.first { ($0["type"] as? String) == "rugged" }
+    let mountain = nodeList.first { ($0["type"] as? String) == "mountain" }
     let erosionFilter = nodeList.first { ($0["type"] as? String) == "erosionfilter" }
     h.expect((combine?["inputCount"] as? Int) == 2, "combine input count missing from catalog")
-    h.expect(!((rugged?["defaultParams"] as? [[String: Any]]) ?? []).isEmpty,
-             "rugged defaults missing from catalog")
+    h.expect(!((mountain?["defaultParams"] as? [[String: Any]]) ?? []).isEmpty,
+             "mountain defaults missing from catalog")
     let erosionOutputs = erosionFilter?["outputs"] as? [[String: Any]] ?? []
     h.expect(erosionOutputs.count == 2 &&
              erosionOutputs.contains { ($0["name"] as? String) == "ridge" &&

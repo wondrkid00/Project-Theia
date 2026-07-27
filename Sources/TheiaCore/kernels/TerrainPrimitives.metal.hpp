@@ -3,7 +3,7 @@
 namespace theia {
 namespace kernels {
 
-// Shared deterministic terrain toolkit and three grouped primitive families.
+// Shared deterministic terrain toolkit and two grouped primitive families.
 // See docs/research/terrain-primitives-notes.md.
 inline constexpr const char* kTerrainPrimitives = R"METAL(
 #include <metal_stdlib>
@@ -47,12 +47,6 @@ static inline float randCell(int2 c, uint seed) {
     return unit24(hash2(uint(c.x), uint(c.y), seed));
 }
 
-static inline float2 featurePoint(int2 c, uint seed) {
-    float x = randCell(c, seed ^ 0xA511E9B3u);
-    float y = randCell(c, seed ^ 0x63D83595u);
-    return float2(c) + float2(x, y);
-}
-
 static inline float2 grad2(int2 i, uint seed) {
     uint h = hash2(uint(i.x), uint(i.y), seed);
     float a = float(h) * (6.28318530718f / 4294967296.0f);
@@ -68,14 +62,6 @@ static inline float gradientNoise(float2 p, uint seed) {
     float n01 = dot(grad2(i + int2(0,1), seed), f-float2(0,1));
     float n11 = dot(grad2(i + int2(1,1), seed), f-float2(1,1));
     return mix(mix(n00,n10,u.x), mix(n01,n11,u.x), u.y) * 1.41421356f;
-}
-
-static inline float billowNoise(float2 p, uint seed) {
-    return 2.0f * abs(gradientNoise(p, seed)) - 1.0f;
-}
-
-static inline float ridgedBasis(float2 p, uint seed) {
-    return sat(1.0f - abs(gradientNoise(p, seed)));
 }
 
 static inline float fbm(float2 p, float frequency, uint octaves,
@@ -122,61 +108,9 @@ static inline float surroundingRelief(float2 p, float amount, float scale,
     return amount * sat(0.5f + 0.5f*(0.75f*broad + 0.25f*fine));
 }
 
-struct WorleyResult {
-    float f1;
-    float f2;
-    float value;
-    uint id;
-    float2 owner;
-};
-
-static inline WorleyResult worley(float2 p, uint seed) {
-    int2 base = int2(floor(p));
-    WorleyResult r{INFINITY, INFINITY, 0.0f, 0u, float2(0.0f)};
-    int2 owner = int2(0);
-    for (int oy = -2; oy <= 2; ++oy) {
-        for (int ox = -2; ox <= 2; ++ox) {
-            int2 c = base + int2(ox,oy);
-            float d = length(p - featurePoint(c, seed));
-            bool before = (c.y < owner.y) || (c.y == owner.y && c.x < owner.x);
-            if (d < r.f1 || (d == r.f1 && before)) {
-                r.f2 = r.f1;
-                r.f1 = d;
-                owner = c;
-                r.owner = featurePoint(c, seed);
-                r.value = randCell(c, seed ^ 0xB5297A4Du);
-                r.id = hash2(uint(c.x), uint(c.y), seed);
-            } else if (d < r.f2) {
-                r.f2 = d;
-            }
-        }
-    }
-    return r;
-}
-
-static inline float sdSegment(float2 p, float2 a, float2 b, float radius) {
-    float2 ab = b-a;
-    float t = clamp(dot(p-a,ab)/max(dot(ab,ab),1.0e-12f),0.0f,1.0f);
-    return length(p-mix(a,b,t))-radius;
-}
-
-static inline float smoothMin(float a, float b, float k) {
-    k = max(k, 1.0e-6f);
-    float h = clamp(0.5f+0.5f*(b-a)/k,0.0f,1.0f);
-    return mix(b,a,h)-k*h*(1.0f-h);
-}
-
 static inline float2 domainPoint(uint2 gid, uint width, uint height) {
     float2 denominator = float2(max(width-1u,1u), max(height-1u,1u));
     return float2(gid)/denominator - 0.5f;
-}
-
-static inline float gaussian2(float2 p, float2 c, float2 e, float2 t,
-                              float sigmaE, float sigmaT) {
-    float2 d = p-c;
-    float u = dot(d,e)/max(sigmaE,1.0e-5f);
-    float v = dot(d,t)/max(sigmaT,1.0e-5f);
-    return exp(-0.5f*(u*u+v*v));
 }
 
 static inline float massLineValue(float2 p, constant PrimitiveParams& P) {
@@ -257,7 +191,6 @@ static inline float massLineValue(float2 p, constant PrimitiveParams& P) {
         // radiating from the ridge.
         const uint kSpineSegments=20u;
         float bestDistance=1.0e9f;
-        float bestTau=0.0f;
         float2 previous=center-0.5f*span*e;
         for (uint k=1u;k<=kSpineSegments;++k) {
             float s0=float(k)/float(kSpineSegments);
@@ -272,7 +205,6 @@ static inline float massLineValue(float2 p, constant PrimitiveParams& P) {
             float dist=length(pa-ba*hh);
             if (dist<bestDistance) {
                 bestDistance=dist;
-                bestTau=(float(k-1u)+hh)/float(kSpineSegments);
             }
             previous=current;
         }
@@ -298,8 +230,8 @@ static inline float massLineValue(float2 p, constant PrimitiveParams& P) {
             float tau=sat((float(j)+0.5f+jitter*(2.0f*rv-1.0f))
                           /max(peaks,1.0f));
             // Summit position is the actual point on the spine, and influence
-            // is true 2D distance to it. Deriving it from `bestTau` inherited
-            // that value's jump wherever the nearest spine segment changes,
+            // is true 2D distance to it. Deriving it from the nearest-segment
+            // parameter inherited a jump wherever the nearest segment changes,
             // which rendered as thin slashes across the ridge.
             float centredTau=2.0f*tau-1.0f;
             float bowTau=arc*span*0.45f*(1.0f-centredTau*centredTau);
@@ -322,118 +254,6 @@ static inline float massLineValue(float2 p, constant PrimitiveParams& P) {
         float ground=surroundingRelief(w,surroundings,scale,P.seed);
         return sat(ground*(1.0f-0.65f*z)
                    + height*z*roughFactor(w,rough,P.seed));
-    }
-    if (kind == 4u) { // mountainside
-        float scale=P.v[0], height=P.v[1], slope=P.v[2];
-        float angle=toRadians(P.v[3]), peak=P.v[4], detail=P.v[5];
-        float2 center=0.5f*float2(P.v[7],P.v[8]);
-        float2 e=float2(cos(angle),sin(angle));
-        float2 w=warpPoint(p,scale,P.v[6],P.seed);
-        float d=dot(w-center,e)/max(0.5f*scale,1.0e-5f);
-        float side=pow(sat(0.5f+0.5f*d),mix(3.0f,0.5f,slope));
-        float summit=peak*exp2(-dot(w-center,w-center)/
-                               max(0.04f*scale*scale,1.0e-6f));
-        float detailTerm=detail*fbm(4.0f*w,1.0f/scale,4u,2.0f,0.5f,P.seed)
-                         *side*(1.0f-side);
-        return sat(height*sat(side+summit+detailTerm));
-    }
-    if (kind == 5u) { // ridge
-        float scale=P.v[0], height=P.v[1], len=P.v[2], width=P.v[3];
-        float angle=toRadians(P.v[4]), definition=P.v[5], fractures=P.v[6];
-        float2 center=0.5f*float2(P.v[8],P.v[9]);
-        float2 e=float2(cos(angle),sin(angle));
-        float2 t=float2(-e.y,e.x);
-        float halfLength=max(0.5f*len*scale,1.0e-5f);
-        float s=dot(p-center,e);
-        float axial=s/halfLength;
-        float q=dot(p-center,t);
-        float bendNoise=fbm(float2(0.90f*axial+13.1f,7.7f),1.0f,
-                            3u,2.0f,0.5f,P.seed^0x68BC21EBu);
-        float bend=0.45f*scale*P.v[7]*bendNoise;
-        float lateral=q-bend;
-        float radius=max(width*scale,1.0e-5f);
-        float d=abs(lateral);
-        float coreSigma=radius*mix(1.25f,0.70f,definition);
-        float core=exp2(-pow(d/max(coreSigma,1.0e-5f),2.0f));
-        float shoulder=exp2(-pow(d/max(2.25f*radius,1.0e-5f),2.0f));
-        float support=1.0f-smoothstep(3.0f*radius,4.0f*radius,d);
-        float endpoint=1.0f-smoothstep(0.68f,0.98f,abs(axial));
-        float axialNoise=fbm(float2(1.35f*axial,5.2f),1.0f,
-                             3u,2.0f,0.5f,P.seed^0x4F1BBCDCu);
-        float alongModulation=0.88f+0.12f*
-            sat(0.5f+0.5f*axialNoise);
-        float fractureSignal=abs(fbm(
-            float2(2.4f*axial+0.18f*lateral/radius,19.7f),1.0f,
-            3u,2.0f,0.5f,P.seed^0x91E10DA5u));
-        float crack=1.0f-smoothstep(0.035f,0.14f,fractureSignal);
-        float profile=(0.25f*core+0.75f*shoulder)*support;
-        float fractureGain=1.0f-0.55f*fractures*crack*
-                           smoothstep(0.08f,0.45f,profile);
-        return sat(height*profile*endpoint*alongModulation*fractureGain);
-    }
-    if (kind == 6u) { // rugged
-        float scale=P.v[0], height=P.v[1], bulk=P.v[2], rough=P.v[3];
-        float fractures=P.v[4];
-        float2 w=warpPoint(p,scale,P.v[5],P.seed);
-        float f=1.0f/scale;
-        float n0=fbm(w,f,5u,2.0f,0.5f,P.seed);
-        float n1=0.5f+0.5f*billowNoise(3.0f*w, P.seed^0x91E10DA5u);
-        WorleyResult wr=worley((w+0.5f)*(1.5f*f),P.seed^0xDB4F0B91u);
-        float crack=1.0f-smoothstep(0.02f,0.18f,wr.f2-wr.f1);
-        float ridge=ridgedBasis(2.0f*w*f,P.seed^0x6C8E9CF5u);
-        float x=sat(bulk*(0.5f+0.5f*n0)+0.35f*rough*n1+
-                    0.20f*rough*ridge-0.25f*fractures*crack);
-        return sat(height*smooth5(x));
-    }
-    if (kind == 7u) { // slump
-        float scale=P.v[0], height=P.v[1], collapse=P.v[2];
-        float angle=toRadians(P.v[3]), softness=P.v[4], lobes=P.v[5];
-        float2 e=float2(cos(angle),sin(angle));
-        float2 t=float2(-e.y,e.x);
-        float2 w=warpPoint(p,scale,P.v[6],P.seed);
-        float sigmaE=mix(0.14f,0.24f,softness)*scale;
-        float sigmaT=mix(0.09f,0.14f,softness)*scale;
-        float z=0.0f;
-        uint count=uint(lobes);
-        for (uint j=0u;j<8u;++j) {
-            if (j>=count) break;
-            float tau=(float(j)+0.5f)/max(lobes,1.0f)-0.5f;
-            float rv=randCell(int2(int(j),17),P.seed^0xB5297A4Du);
-            float rv2=randCell(int2(int(j),19),P.seed^0x63D83595u);
-            float2 scar=-0.18f*scale*(1.0f-4.0f*tau*tau)*e+
-                        1.2f*scale*tau*t;
-            float2 toe=(0.38f+0.10f*rv)*scale*e+
-                       (0.75f*tau+0.08f*(2.0f*rv2-1.0f))*scale*t;
-            z += gaussian2(w,toe,e,t,sigmaE,sigmaT)-
-                 gaussian2(w,scar,e,t,sigmaE,sigmaT);
-        }
-        z *= 2.25f*collapse/sqrt(max(lobes,1.0f));
-        return sat(0.5f+height*z);
-    }
-    if (kind == 8u) { // uplift
-        float scale=P.v[0], height=P.v[1], angle=toRadians(P.v[2]);
-        float folds=P.v[3], foldWidth=P.v[4], jitter=P.v[5], rough=P.v[6];
-        float2 e=float2(cos(angle),sin(angle));
-        float2 t=float2(-e.y,e.x);
-        float2 w=warpPoint(p,scale,0.25f*jitter,P.seed^0x68BC21EBu);
-        float z=0.0f;
-        uint count=uint(folds);
-        for (uint j=0u;j<12u;++j) {
-            if (j>=count) break;
-            float rv=randCell(int2(int(j),29),P.seed^0xB5297A4Du);
-            float rv2=randCell(int2(int(j),31),P.seed^0x63D83595u);
-            float offset=mix(-0.5f,0.5f,(float(j)+0.5f)/max(folds,1.0f))*scale;
-            float axial=jitter*0.15f*scale*(2.0f*rv-1.0f);
-            float2 c=offset*t+axial*e;
-            float2 a=c-0.5f*scale*e;
-            float2 b=c+0.5f*scale*e;
-            float d=max(sdSegment(w,a,b,0.0f),0.0f);
-            float localWidth=foldWidth*mix(0.75f,1.25f,rv2);
-            float localAmplitude=mix(0.70f,1.0f,rv);
-            z=max(z,localAmplitude*
-                  exp2(-(d*d)/max(localWidth*localWidth,1.0e-6f)));
-        }
-        return sat(height*z*roughFactor(w,0.35f*rough,P.seed));
     }
     return 0.0f;
 }
@@ -520,72 +340,6 @@ static inline float radialImpactValue(float2 p, constant PrimitiveParams& P) {
     return 0.0f;
 }
 
-static inline float repeatingFieldValue(float2 p, constant PrimitiveParams& P) {
-    if (P.kind == 12u) { // dunesea
-        float scale=P.v[0], height=P.v[1], angle=toRadians(P.v[2]);
-        float asym=P.v[3], sharp=P.v[4], chaos=P.v[5], warp=P.v[6];
-        float2 e=float2(cos(angle),sin(angle));
-        float2 t=float2(-e.y,e.x);
-        float cross=dot(p,t);
-        float along=dot(p,e);
-        float2 q=float2(cross,along);
-        float stretchNoise=fbm(float2(q.x,0.35f*q.y),0.45f/scale,
-                               3u,2.0f,0.5f,P.seed^0x7F4A7C15u);
-        float localFrequency=clamp(1.0f+0.75f*chaos*stretchNoise,
-                                   0.55f,1.45f);
-        float meander=1.10f*warp*
-            fbm(float2(q.x,0.22f*q.y),0.85f/scale,
-                3u,2.0f,0.5f,P.seed);
-        float phaseChaos=0.35f*chaos*
-            fbm(float2(q.x,0.55f*q.y),1.20f/scale,
-                4u,2.0f,0.5f,P.seed^0x4F1BBCDCu);
-        // Seif dunes MEANDER: their crests are sinuous, with a meander
-        // wavelength about an order of magnitude larger than dune height.
-        // Straight parallel crests are the giveaway that a field was generated
-        // by a periodic function rather than by wind.
-        float crestMeander=P.v[7];
-        float defects=P.v[8];
-        float sinuous=crestMeander*1.6f*
-            fbm(float2(q.x*0.55f,q.y*0.08f),0.55f/scale,
-                4u,2.0f,0.5f,P.seed^0x1B56C4E9u);
-        float rawPhase=(along/scale)*localFrequency+meander+phaseChaos+sinuous;
-        float phase=fract(rawPhase);
-        // Amplitude and defects vary as SMOOTH SPATIAL FIELDS. Hashing on
-        // floor(phase) gave each crest a constant, so the value jumped at every
-        // phase wrap and the field rendered as rectangular tiles with hard
-        // seams -- worse than the uniformity it was meant to cure. Sampling
-        // noise in (along-crest, across-crest) keeps neighbouring dunes
-        // different without introducing a discontinuity anywhere.
-        float amplitudeField=fbm(float2(q.x*0.35f,q.y*0.85f),0.55f/scale,
-                                 3u,2.0f,0.5f,P.seed^0x2545F491u);
-        float crestAmplitude=mix(0.40f,1.0f,sat(0.5f+0.5f*amplitudeField));
-        // Along-crest defects: a crest dies out and its neighbour takes over,
-        // which is what produces the Y-junctions seen in real dune fields.
-        float defectField=fbm(float2(q.x*0.70f,q.y*1.50f),0.80f/scale,
-                              3u,2.0f,0.5f,P.seed^0xA24BAED4u);
-        // Centred so the gaps actually open: offsetting by (1-defects) put the
-        // threshold outside the noise range, and no crest ever terminated.
-        float alive=smoothstep(-0.28f,0.28f,defectField+(0.45f-defects));
-        float stoss=0.5f+0.45f*asym;
-        float rise=smoothstep(0.0f,1.0f,phase/stoss);
-        float fall=1.0f-smoothstep(0.0f,1.0f,(phase-stoss)/(1.0f-stoss));
-        float dune=phase<=stoss ? rise : fall;
-        dune=pow(sat(dune),mix(2.5f,0.45f,sharp))*crestAmplitude*alive;
-        float envelope=clamp((0.75f+0.25f*fbm(p,0.5f/scale,3u,2.0f,0.5f,
-                                             P.seed^0xC13FA9A9u))*
-                             (1.0f+chaos*fbm(p,4.0f/scale,3u,2.0f,0.5f,
-                                            P.seed^0x91E10DA5u)),
-                             0.0f,1.0f+chaos);
-        float segmentNoise=fbm(float2(q.x,0.55f*q.y),0.38f/scale,
-                               3u,2.0f,0.5f,P.seed^0xD1B54A35u);
-        float segment=smoothstep(-0.18f,0.18f,segmentNoise);
-        float continuity=mix(1.0f,0.12f+0.88f*segment,
-                             smoothstep(0.0f,0.35f,chaos));
-        return sat(height*dune*envelope*continuity);
-    }
-    return 0.0f;
-}
-
 kernel void terrain_mass_line(device float* out [[buffer(0)]],
                               constant PrimitiveParams& P [[buffer(1)]],
                               uint2 gid [[thread_position_in_grid]]) {
@@ -602,13 +356,6 @@ kernel void terrain_radial_impact(device float* out [[buffer(0)]],
     out[gid.y*P.width+gid.x]=isfinite(v)?sat(v):v;
 }
 
-kernel void terrain_repeating_field(device float* out [[buffer(0)]],
-                                    constant PrimitiveParams& P [[buffer(1)]],
-                                    uint2 gid [[thread_position_in_grid]]) {
-    if (gid.x>=P.width || gid.y>=P.height) return;
-    float v=repeatingFieldValue(domainPoint(gid,P.width,P.height),P);
-    out[gid.y*P.width+gid.x]=isfinite(v)?sat(v):v;
-}
 )METAL";
 
 } // namespace kernels

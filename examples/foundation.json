@@ -1,7 +1,7 @@
 {
   "connections": [
     {
-      "from": "ridge",
+      "from": "range",
       "input": 0,
       "to": "warped"
     },
@@ -40,19 +40,23 @@
       "type": "perlin"
     },
     {
-      "id": "ridge",
+      "id": "range",
       "params": {
-        "definition": 0.72,
+        "arc": 0.3,
         "direction": 28,
-        "fractures": 0.38,
         "height": 0.88,
         "length": 1.35,
+        "peakVariation": 0.7,
+        "peaks": 5,
+        "roughness": 0.42,
         "scale": 0.7,
         "seed": 77,
+        "sinuosity": 0.4,
+        "surroundings": 0.25,
         "warp": 0.24,
-        "width": 0.14
+        "width": 0.22
       },
-      "type": "ridge"
+      "type": "mountainrange"
     },
     {
       "id": "warped",
@@ -108,7 +112,7 @@
         "x": 1040,
         "y": 120
       },
-      "ridge": {
+      "range": {
         "x": 80,
         "y": 60
       },

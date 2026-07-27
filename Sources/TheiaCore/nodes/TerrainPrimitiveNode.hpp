@@ -12,7 +12,6 @@ namespace theia {
 enum class TerrainPrimitiveFamily : std::uint32_t {
     massLine = 0,
     radialImpact = 1,
-    repeatingField = 2,
 };
 
 struct TerrainPrimitiveParamDescriptor {

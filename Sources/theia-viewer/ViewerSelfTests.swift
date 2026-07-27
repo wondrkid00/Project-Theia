@@ -88,9 +88,7 @@ func runViewerSelfTests() -> Int32 {
                                      type: "rivercarve") == "River Carve Final",
            "custom node ids should become readable canvas titles")
     expect(NodeTypeCatalog.title(for: "rollinghills") == "Rolling Hills" &&
-           NodeTypeCatalog.title(for: "mountainrange") == "Mountain Range" &&
-           NodeTypeCatalog.title(for: "dunesea") == "Dune Sea" &&
-           NodeTypeCatalog.title(for: "mountainside") == "Mountain Side",
+           NodeTypeCatalog.title(for: "mountainrange") == "Mountain Range",
            "terrain primitive ids should have readable catalog titles")
     let expectedTerrainSubtitles = [
         "rollinghills": "Soft rolling landforms",
@@ -98,12 +96,6 @@ func runViewerSelfTests() -> Int32 {
         "mountainrange": "Connected mountain chain",
         "canyon": "Incised canyon network",
         "crater": "Single impact basin",
-        "dunesea": "Wind-shaped dune field",
-        "mountainside": "Directional mountain slope",
-        "ridge": "Linear ridge crest",
-        "rugged": "Broken rocky terrain",
-        "slump": "Downslope mass movement",
-        "uplift": "Broad tectonic rise",
         "volcano": "Volcanic cone and crater",
     ]
     expect(NodeTypeCatalog.terrainTypes.allSatisfy {
@@ -116,25 +108,23 @@ func runViewerSelfTests() -> Int32 {
            "empty graph Quick Add should expose the four curated terrain starters")
 
     let catalogGroups = NodeTypeCatalog.grouped(
-        NodeTypeCatalog.terrainTypes + ["perlin", "ridged"])
+        NodeTypeCatalog.terrainTypes + ["perlin"])
     expect(catalogGroups.first?.id == "terrain" &&
            (catalogGroups.first.map { Array($0.types.prefix(4)) } ?? []) ==
            NodeTypeCatalog.quickStartTypes,
            "terrain catalog should lead with the curated primitive order")
     expect(catalogGroups.first(where: { $0.id == "noise" })?.types == ["perlin"],
            "Perlin should remain in a dedicated Noise group")
-    expect(!catalogGroups.flatMap(\.types).contains("ridged"),
-           "legacy ridged generator should not appear in the viewer catalog")
     let mountainSearch = NodeTypeCatalog.filteredGroups(
         catalogGroups, query: "  mountain range ")
     expect(mountainSearch.count == 1 &&
            mountainSearch.first?.id == "terrain" &&
            mountainSearch.first?.types == ["mountainrange"],
            "picker search should trim input and match readable terrain titles")
-    let duneSearch = NodeTypeCatalog.filteredGroups(catalogGroups,
-                                                     query: "DUNE")
-    expect(duneSearch.count == 1 &&
-           duneSearch.first?.types == ["dunesea"],
+    let craterSearch = NodeTypeCatalog.filteredGroups(catalogGroups,
+                                                       query: "CRATER")
+    expect(craterSearch.count == 1 &&
+           craterSearch.first?.types == ["crater"],
            "picker search should be case-insensitive and keep results compact")
     let terrainSearch = NodeTypeCatalog.filteredGroups(catalogGroups,
                                                         query: "terrain")
@@ -149,13 +139,7 @@ func runViewerSelfTests() -> Int32 {
         "mountain": ["scale", "height", "bulk"],
         "mountainrange": ["scale", "height", "length", "width", "direction"],
         "canyon": ["scale", "height", "depth", "width"],
-        "crater": ["scale", "height", "depth", "rimHeight"],
-        "dunesea": ["scale", "height", "direction", "asymmetry"],
-        "mountainside": ["scale", "height", "slope", "direction"],
-        "ridge": ["scale", "height", "length", "width", "direction"],
-        "rugged": ["scale", "height", "bulk"],
-        "slump": ["scale", "height", "collapse", "direction"],
-        "uplift": ["scale", "height", "direction", "folds"],
+        "crater": ["scale", "height", "depth", "complexity", "rimHeight"],
         "volcano": ["scale", "height", "mouth", "calderaDepth"],
     ]
     var terrainTierFailures: [String] = []
@@ -197,12 +181,27 @@ func runViewerSelfTests() -> Int32 {
         expect(terrainConfig("mountain", "x", 0).range == -1...1,
                "terrain placement should cover normalized coordinates")
         expect(terrainConfig("canyon", "branches", 12).range == 1...32 &&
-               terrainConfig("mountainrange", "peaks", 5).range == 1...12 &&
-               terrainConfig("slump", "lobes", 4).range == 1...8 &&
-               terrainConfig("uplift", "folds", 5).range == 1...12,
+               terrainConfig("mountainrange", "peaks", 5).range == 1...12,
                "terrain integer controls should use their accepted bounds")
-        expect(terrainConfig("uplift", "foldWidth", 0.12).range == 0.01...0.5,
-               "fold width should use its narrow normalized envelope")
+        for (type, parameter, value) in [
+            ("rollinghills", "detail", 0.55),
+            ("canyon", "benching", 0.45),
+            ("crater", "complexity", 0.30),
+            ("crater", "terraces", 0.50),
+            ("mountain", "surroundings", 0.30),
+            ("mountainrange", "peakVariation", 0.65),
+            ("mountainrange", "sinuosity", 0.45),
+        ] {
+            expect(terrainConfig(type, parameter, value).range == 0...1,
+                   "\(type).\(parameter) must match the core 0...1 range")
+        }
+        expect(terrainConfig("mountainrange", "arc", 0.35).range == -1...1,
+               "mountain range arc must match the core -1...1 range")
+        expect(TerrainParameterCatalog.sortOrder(
+            nodeType: "mountainrange", parameter: "arc") <
+            TerrainParameterCatalog.sortOrder(
+                nodeType: "mountainrange", parameter: "seed"),
+               "new terrain controls should have deterministic inspector order")
         expect(terrainConfig("volcano", "seed", 1337).range.contains(1337),
                "terrain seed range should include the accepted default")
         print("✓ terrain primitive catalog and authoring ranges")

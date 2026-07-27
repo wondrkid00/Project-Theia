@@ -41,13 +41,6 @@ constexpr P kCrater[] = {
     {"terraces",0.50,0,1,false}, {"surroundings",0.30,0,1,false},
     {"seed",1337,0,9999,true},
 };
-constexpr P kDuneSea[] = {
-    {"scale",0.18,0.05,1.5,false}, {"height",0.42,0,1,false},
-    {"direction",0,0,360,false}, {"asymmetry",0.65,0,1,false},
-    {"sharpness",0.55,0,1,false}, {"chaos",0.25,0,1,false},
-    {"warp",0.15,0,1,false}, {"crestMeander",0.55,0,1,false},
-    {"defects",0.45,0,1,false}, {"seed",1337,0,9999,true},
-};
 constexpr P kMountain[] = {
     {"scale",0.65,0.05,1.5,false}, {"height",0.90,0,1,false},
     {"bulk",0.58,0,1,false}, {"roughness",0.38,0,1,false},
@@ -64,39 +57,6 @@ constexpr P kMountainRange[] = {
     {"surroundings",0.30,0,1,false}, {"peakVariation",0.65,0,1,false},
     {"arc",0.35,-1,1,false}, {"sinuosity",0.45,0,1,false},
     {"seed",1337,0,9999,true},
-};
-constexpr P kMountainSide[] = {
-    {"scale",0.90,0.05,1.5,false}, {"height",0.85,0,1,false},
-    {"slope",0.65,0,1,false}, {"direction",25,0,360,false},
-    {"peak",0.50,0,1,false}, {"detail",0.35,0,1,false},
-    {"warp",0.15,0,1,false}, {"x",0,-1,1,false},
-    {"y",0,-1,1,false}, {"seed",1337,0,9999,true},
-};
-constexpr P kRidge[] = {
-    {"scale",0.75,0.05,1.5,false}, {"height",0.85,0,1,false},
-    {"length",1.30,0.25,2,false}, {"width",0.12,0.02,0.6,false},
-    {"direction",20,0,360,false}, {"definition",0.70,0,1,false},
-    {"fractures",0.35,0,1,false}, {"warp",0.25,0,1,false},
-    {"x",0,-1,1,false}, {"y",0,-1,1,false},
-    {"seed",1337,0,9999,true},
-};
-constexpr P kRugged[] = {
-    {"scale",0.55,0.05,1.5,false}, {"height",0.85,0,1,false},
-    {"bulk",0.60,0,1,false}, {"roughness",0.70,0,1,false},
-    {"fractures",0.45,0,1,false}, {"warp",0.25,0,1,false},
-    {"seed",1337,0,9999,true},
-};
-constexpr P kSlump[] = {
-    {"scale",0.65,0.05,1.5,false}, {"height",0.65,0,1,false},
-    {"collapse",0.45,0,1,false}, {"direction",20,0,360,false},
-    {"softness",0.55,0,1,false}, {"lobes",4,1,8,true},
-    {"warp",0.15,0,1,false}, {"seed",1337,0,9999,true},
-};
-constexpr P kUplift[] = {
-    {"scale",0.70,0.05,1.5,false}, {"height",0.85,0,1,false},
-    {"direction",20,0,360,false}, {"folds",5,1,12,true},
-    {"foldWidth",0.12,0.01,0.5,false}, {"jitter",0.25,0,1,false},
-    {"roughness",0.30,0,1,false}, {"seed",1337,0,9999,true},
 };
 constexpr P kVolcano[] = {
     {"scale",0.55,0.05,1.5,false}, {"height",0.90,0,1,false},
@@ -117,14 +77,8 @@ constexpr TerrainPrimitiveDescriptor kDescriptors[] = {
     descriptor("rollinghills", TerrainPrimitiveFamily::massLine, 0, kRollingHills),
     descriptor("canyon", TerrainPrimitiveFamily::massLine, 1, kCanyon),
     descriptor("crater", TerrainPrimitiveFamily::radialImpact, 9, kCrater),
-    descriptor("dunesea", TerrainPrimitiveFamily::repeatingField, 12, kDuneSea),
     descriptor("mountain", TerrainPrimitiveFamily::massLine, 2, kMountain),
     descriptor("mountainrange", TerrainPrimitiveFamily::massLine, 3, kMountainRange),
-    descriptor("mountainside", TerrainPrimitiveFamily::massLine, 4, kMountainSide),
-    descriptor("ridge", TerrainPrimitiveFamily::massLine, 5, kRidge),
-    descriptor("rugged", TerrainPrimitiveFamily::massLine, 6, kRugged),
-    descriptor("slump", TerrainPrimitiveFamily::massLine, 7, kSlump),
-    descriptor("uplift", TerrainPrimitiveFamily::massLine, 8, kUplift),
     descriptor("volcano", TerrainPrimitiveFamily::radialImpact, 10, kVolcano),
 };
 
@@ -172,7 +126,6 @@ const char* familyEntry(TerrainPrimitiveFamily family) {
     switch (family) {
     case TerrainPrimitiveFamily::massLine: return "terrain_mass_line";
     case TerrainPrimitiveFamily::radialImpact: return "terrain_radial_impact";
-    case TerrainPrimitiveFamily::repeatingField: return "terrain_repeating_field";
     }
     return "terrain_mass_line";
 }
