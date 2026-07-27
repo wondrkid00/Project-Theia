@@ -695,3 +695,66 @@ texture, heightfield, or notice obligation is authorized here. On that basis,
 the independently reviewed implementation is compatible with Theia's MIT
 license. The gate is approved under the status recorded at the top of this
 note.
+
+## Landform context and artifact avoidance
+
+Three findings from reviewing the rendered primitives, each recorded because the
+failure mode is easy to reintroduce.
+
+### A landform must not clip to zero at its own radius
+
+`mountain`, `mountainrange` and `crater` derived their profile from
+`sat(1 - rho)` or an equivalent, which is exactly zero outside the feature
+radius. Measured corner relief on all three was **0.00000**: the landform read
+as a shape stamped onto a dead-flat plane, which is the most obviously synthetic
+result a generator can produce.
+
+Two additions fix it, and they are separate concerns:
+
+- **`surroundings`** adds low-relief ground everywhere, which the landform then
+  grades into. It is faded under the feature (`ground * (1 - 0.65 z)`) so it
+  does not fight the summit.
+- A **footslope skirt**, `0.24 exp(-1.1 rho^2)`, extends a decaying piedmont
+  past the radius. This belongs to the landform, not the surroundings, and so
+  remains present at `surroundings = 0`.
+
+Roughness must multiply the landform term alone. Applied to the whole field it
+inherits the profile's zero and leaves the surrounding ground perfectly smooth.
+
+### Never sample noise in polar coordinates
+
+The crater used `fbm(float2(angle * k, rho * k))` for its rays and rim wander.
+The angular coordinate varies infinitely fast as radius approaches zero, so the
+result was a starburst of spokes converging on the centre — visible immediately
+in a hillshade. All azimuthal variation is now sampled in **cartesian** space:
+`gradientNoise(dir * k)` for rim scalloping, which is continuous around the
+circle, and `fbm(d * k)` for ejecta texture.
+
+A regression test compares angular variation on a ring near the centre against
+one further out; a starburst concentrates variation as the radius shrinks.
+
+### `max()` over overlapping features creases
+
+`mountainrange` combined its per-summit gaussians with `max()`, which is only C0
+where two summits' influence crosses. That crease rendered as hard straight cuts
+running across the ridge. The probabilistic union `a + b - ab` is smooth,
+bounded to `[0,1]`, and order independent.
+
+Summits were also evenly spaced at identical height, reading as a manufactured
+comb. `peakVariation` widens the spacing jitter and varies each summit's height
+and width.
+
+## Detail and carve interactions
+
+`rollinghills` used three fbm octaves, band-limiting the surface far below the
+sampling grid; it read as blurred rather than smooth. `detail` scales the octave
+count from 3 to 7.
+
+The same change applied to the `canyon` upland was **reverted**. Canyon is a
+composite — upland surface, then a traced river mask, then `rivercarve` — and a
+fourth octave perturbs the traced channels enough to weaken the carve measurably
+(1828 to 1485 carved cells on the test fixture). Wall character comes from
+`benching` instead, which quantizes the upland into weathered sedimentary
+benches at roughly a fifth of that cost. Benching uses `smooth5` within each
+band; the resulting near-zero gradient at band edges is why the effect is mixed
+rather than applied outright, since flats stall the river tracing.

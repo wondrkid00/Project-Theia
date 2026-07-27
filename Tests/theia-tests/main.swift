@@ -1666,17 +1666,19 @@ func p4JSON(type: String, params: String = "{}", inputCount: Int = 1) -> String 
 let terrainPrimitiveDefaults: [(type: String, params: [(String, Double)])] = [
     ("rollinghills", [
         ("scale", 0.65), ("height", 0.55), ("softness", 0.70),
-        ("undulation", 0.40), ("warp", 0.15), ("seed", 1337)
+        ("undulation", 0.40), ("warp", 0.15), ("detail", 0.55),
+        ("seed", 1337)
     ]),
     ("canyon", [
         ("scale", 0.75), ("height", 0.78), ("depth", 0.55), ("width", 0.10),
         ("branches", 12), ("wallSharpness", 0.65), ("roughness", 0.25),
-        ("seed", 1337)
+        ("benching", 0.45), ("seed", 1337)
     ]),
     ("crater", [
         ("scale", 0.45), ("height", 0.80), ("depth", 0.55),
-        ("rimHeight", 0.22), ("rimWidth", 0.18), ("irregularity", 0.15),
-        ("ejecta", 0.20), ("x", 0), ("y", 0), ("seed", 1337)
+        ("rimHeight", 0.22), ("rimWidth", 0.18), ("irregularity", 0.45),
+        ("ejecta", 0.35), ("x", 0), ("y", 0), ("floor", 0.35),
+        ("terraces", 0.50), ("surroundings", 0.30), ("seed", 1337)
     ]),
     ("craterfield", [
         ("scale", 0.22), ("height", 0.75), ("density", 18),
@@ -1691,13 +1693,13 @@ let terrainPrimitiveDefaults: [(type: String, params: [(String, Double)])] = [
     ("mountain", [
         ("scale", 0.65), ("height", 0.90), ("bulk", 0.58),
         ("roughness", 0.38), ("warp", 0.20), ("x", 0), ("y", 0),
-        ("seed", 1337)
+        ("surroundings", 0.30), ("seed", 1337)
     ]),
     ("mountainrange", [
         ("scale", 0.70), ("height", 0.90), ("length", 1.25),
         ("width", 0.24), ("direction", 25), ("peaks", 5),
         ("roughness", 0.40), ("warp", 0.25), ("x", 0), ("y", 0),
-        ("seed", 1337)
+        ("surroundings", 0.30), ("peakVariation", 0.65), ("seed", 1337)
     ]),
     ("mountainside", [
         ("scale", 0.90), ("height", 0.85), ("slope", 0.65),
@@ -2262,6 +2264,110 @@ h.test("Slump direction and lobe count control its structure") {
              "slump direction should rotate its structure")
     h.expect(meanAbsoluteDifference(a, many) > 0.005,
              "slump lobe count should affect deposits")
+}
+
+h.test("Landform primitives sit in terrain rather than on a flat plane") {
+    // mountain, mountainrange and crater all clipped their profile to exactly
+    // zero outside the feature radius, so the surroundings measured 0.00000
+    // relief -- the landform read as stamped onto a plane. `surroundings` adds
+    // ground the feature grades into.
+    let size = 128
+    var flat: [String] = []
+    for type in ["mountain", "mountainrange", "crater"] {
+        let field = evalGraphHeightsJSON(
+            primitiveJSON(type, params: "{ \"seed\": 909 }", size: size),
+            sink: "terrain", size: UInt32(size))
+        guard field.count == size * size else {
+            flat.append("\(type) (evaluation failed)")
+            continue
+        }
+        // Sample a corner well clear of any centred feature.
+        var corner: [Float] = []
+        for y in 0..<(size / 8) {
+            for x in 0..<(size / 8) { corner.append(field[y * size + x]) }
+        }
+        let relief = (corner.max() ?? 0) - (corner.min() ?? 0)
+        if relief < 0.002 { flat.append("\(type) relief \(relief)") }
+    }
+    h.expect(flat.isEmpty, "these landforms sit on a dead-flat plane: \(flat)")
+
+    // `surroundings` must be doing the work, not an unconditional base. Turning
+    // it off is compared RELATIVELY: the footslope skirt is deliberately still
+    // present out there, since that belongs to the landform rather than to the
+    // surrounding ground, so strict flatness is the wrong contract.
+    @MainActor func cornerRelief(_ surroundings: String) -> Float {
+        let field = evalGraphHeightsJSON(
+            primitiveJSON("mountain",
+                          params: "{ \"seed\": 909, \"surroundings\": \(surroundings) }",
+                          size: size),
+            sink: "terrain", size: UInt32(size))
+        guard field.count == size * size else { return -1 }
+        var corner: [Float] = []
+        for y in 0..<(size / 8) {
+            for x in 0..<(size / 8) { corner.append(field[y * size + x]) }
+        }
+        return (corner.max() ?? 0) - (corner.min() ?? 0)
+    }
+    let off = cornerRelief("0")
+    let on = cornerRelief("0.6")
+    h.expect(off >= 0 && on >= 0, "surroundings fixtures must evaluate")
+    // Measured ratio is ~3.6x; the bound leaves margin while still failing if
+    // the control is ignored. The residual at 0 is the footslope skirt.
+    h.expect(on > off * 2.5,
+             "surroundings should dominate corner relief: \(off) -> \(on)")
+}
+
+h.test("Crater and mountain range avoid radial and crease artifacts") {
+    let size = 192
+    // Sampling noise on atan2 makes the angular coordinate vary infinitely fast
+    // near the centre, producing a starburst of spokes. Detect it by comparing
+    // variance along a ring close to the centre against one further out: a
+    // starburst concentrates angular variation as radius shrinks.
+    let crater = evalGraphHeightsJSON(
+        primitiveJSON("crater", params: "{ \"seed\": 77 }", size: size),
+        sink: "terrain", size: UInt32(size))
+    h.expect(crater.count == size * size, "crater must evaluate")
+    @MainActor func ringVariation(_ field: [Float], radius: Double) -> Double {
+        var samples: [Double] = []
+        for i in 0..<180 {
+            let a = Double(i) / 180.0 * 2.0 * Double.pi
+            let x = Int((0.5 + radius * cos(a)) * Double(size - 1))
+            let y = Int((0.5 + radius * sin(a)) * Double(size - 1))
+            guard x >= 0, y >= 0, x < size, y < size else { continue }
+            samples.append(Double(field[y * size + x]))
+        }
+        guard samples.count > 2 else { return 0 }
+        var d = 0.0
+        for i in 1..<samples.count { d += abs(samples[i] - samples[i - 1]) }
+        return d / Double(samples.count)
+    }
+    let inner = ringVariation(crater, radius: 0.02)
+    let outer = ringVariation(crater, radius: 0.10)
+    h.expect(inner <= max(outer, 1e-6) * 3.0,
+             "crater shows a radial starburst near its centre: \(inner) vs \(outer)")
+
+    // max() over per-summit gaussians is only C0 where two summits' influence
+    // crosses, which showed as hard straight cuts across the ridge. A crease
+    // leaves an isolated spike in the second derivative along the ridge axis.
+    let range = evalGraphHeightsJSON(
+        primitiveJSON("mountainrange", params: "{ \"seed\": 77 }", size: size),
+        sink: "terrain", size: UInt32(size))
+    h.expect(range.count == size * size, "mountainrange must evaluate")
+    var worst: Float = 0
+    var total: Float = 0
+    var count = 0
+    for y in 1..<(size - 1) {
+        for x in 1..<(size - 1) {
+            let i = y * size + x
+            let curvature = abs(range[i - 1] + range[i + 1] - 2 * range[i])
+            worst = max(worst, curvature)
+            total += curvature
+            count += 1
+        }
+    }
+    let mean = total / Float(max(count, 1))
+    h.expect(worst < mean * 260,
+             "mountainrange has a crease discontinuity: peak \(worst) vs mean \(mean)")
 }
 
 h.test("Canyon depth carves a substantially connected network") {

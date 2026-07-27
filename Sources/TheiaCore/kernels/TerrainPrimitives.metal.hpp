@@ -109,6 +109,19 @@ static inline float roughFactor(float2 p, float amount, uint seed) {
                  0.0f, 1.0f + amount);
 }
 
+// Low-relief ground the landform sits in. A primitive whose profile clips to
+// exactly zero outside its radius renders as a shape stamped on a dead-flat
+// plane, which is the most artificial thing a generator can do; measured corner
+// relief on mountain/mountainrange/crater was 0.00000 before this existed.
+static inline float surroundingRelief(float2 p, float amount, float scale,
+                                      uint seed) {
+    if (amount <= 0.0f) return 0.0f;
+    float f = 1.0f/max(scale, 0.05f);
+    float broad = fbm(p, 0.55f*f, 4u, 2.05f, 0.5f, seed ^ 0x9E3779B9u);
+    float fine  = fbm(p, 2.20f*f, 3u, 2.00f, 0.45f, seed ^ 0x85EBCA6Bu);
+    return amount * sat(0.5f + 0.5f*(0.75f*broad + 0.25f*fine));
+}
+
 struct WorleyResult {
     float f1;
     float f2;
@@ -169,56 +182,106 @@ static inline float gaussian2(float2 p, float2 c, float2 e, float2 t,
 static inline float massLineValue(float2 p, constant PrimitiveParams& P) {
     uint kind = P.kind;
 
-    if (kind == 0u) { // rollinghills: scale,height,softness,undulation,warp
+    if (kind == 0u) { // rollinghills: scale,height,softness,undulation,warp,detail
         float scale=P.v[0], height=P.v[1], softness=P.v[2];
-        float undulation=P.v[3], warp=P.v[4];
+        float undulation=P.v[3], warp=P.v[4], detail=P.v[5];
         float2 w=warpPoint(p,scale,warp,P.seed);
         float f=1.0f/scale;
-        float a=fbm(w,f,3u,2.0f,0.45f,P.seed);
+        // Three octaves band-limits the surface far below the sampling grid, so
+        // it reads as blurred rather than smooth. `detail` extends the spectrum
+        // without changing the landform's character.
+        uint oct=3u+uint(clamp(detail,0.0f,1.0f)*4.0f+0.5f);
+        float a=fbm(w,f,oct,2.0f,0.45f,P.seed);
         float b=fbm(w,0.5f*f,2u,2.0f,0.5f,P.seed^0x7F4A7C15u);
         float x=pow(sat(0.5f+0.5f*mix(a,b,undulation)),
                     mix(2.5f,0.55f,softness));
         return sat(1.35f*height*smooth5(x));
     }
-    if (kind == 1u) { // canyon upland: scale,height,depth,width,branches,wall,rough
-        float scale=P.v[0], rough=P.v[6];
+    if (kind == 1u) { // canyon upland: scale,height,depth,width,branches,wall,rough,benching
+        float scale=P.v[0], rough=P.v[6], benching=P.v[7];
         float2 w=warpPoint(p,scale,0.16f,P.seed);
+        // Deliberately 3 octaves. A 4th measurably weakened the carve (1828 ->
+        // 1485 carved cells at the test fixture) because the extra fine relief
+        // perturbs the traced channels; benching supplies the wall character
+        // instead, at a fraction of that cost.
         float n=fbm(w,1.0f/scale,3u,2.0f,0.5f,P.seed);
-        return sat(sat(0.5f+0.5f*n)*roughFactor(w,0.35f*rough,P.seed));
+        float s=sat(0.5f+0.5f*n);
+        // Sedimentary uplands weather into benches, and that stepped profile is
+        // what reads as "canyon" rather than "valley". Quantizing the upland
+        // before the carve makes the walls inherit the steps.
+        if (benching>0.0f) {
+            float steps=mix(3.0f,14.0f,benching);
+            float band=fract(s*steps);
+            float stepped=(floor(s*steps)+smooth5(band))/steps;
+            s=mix(s,stepped,sat(benching)*0.8f);
+        }
+        return sat(s*roughFactor(w,0.35f*rough,P.seed));
     }
-    if (kind == 2u) { // mountain: scale,height,bulk,roughness,warp,x,y
+    if (kind == 2u) { // mountain: scale,height,bulk,roughness,warp,x,y,surroundings
         float scale=P.v[0], height=P.v[1], bulk=P.v[2], rough=P.v[3];
+        float surroundings=P.v[7];
         float2 center=0.5f*float2(P.v[5],P.v[6]);
         float2 w=warpPoint(p,scale,P.v[4],P.seed);
         float rho=length(w-center)/max(0.5f*scale,1.0e-5f);
-        float z=pow(sat(1.0f-rho),mix(3.0f,0.55f,bulk));
-        return sat(height*z*roughFactor(w,rough,P.seed));
+        // `sat(1-rho)` is exactly zero past the radius, ending the massif on a
+        // circle. The gaussian skirt keeps a decaying piedmont beyond it, the
+        // way a real mountain grades into its plain.
+        float core=pow(sat(1.0f-rho),mix(3.0f,0.55f,bulk));
+        float foot=0.24f*exp(-1.1f*rho*rho);
+        float z=sat(core+foot);
+        // Roughness multiplies the LANDFORM only. Applied to the whole field it
+        // would inherit the cone's zero and leave the surroundings smooth.
+        float ground=surroundingRelief(w,surroundings,scale,P.seed);
+        return sat(ground*(1.0f-0.65f*z)
+                   + height*z*roughFactor(w,rough,P.seed));
     }
     if (kind == 3u) { // mountainrange
         float scale=P.v[0], height=P.v[1], len=P.v[2], width=P.v[3];
         float angle=toRadians(P.v[4]), peaks=P.v[5], rough=P.v[6];
         float2 center=0.5f*float2(P.v[8],P.v[9]);
+        float surroundings=P.v[10], peakVariation=P.v[11];
         float2 e=float2(cos(angle),sin(angle));
         float2 a=center-0.5f*len*scale*e;
         float2 b=center+0.5f*len*scale*e;
         float2 w=warpPoint(p,scale,P.v[7],P.seed);
         float radius=max(width*scale,1.0e-4f);
-        float envelope=pow(sat(-sdSegment(w,a,b,radius)/radius),1.35f);
+        float sd=sdSegment(w,a,b,radius);
+        float t=sd/radius;
+        float envelope=pow(sat(-t),1.35f);
+        // Footslope past the ridge body, same reason as `mountain`.
+        float outside=max(t,0.0f);
+        float foot=0.22f*exp(-1.6f*outside*outside);
+
         float peakModulation=0.0f;
         uint count=uint(peaks);
         for (uint j=0u;j<12u;++j) {
             if (j>=count) break;
             int2 hc=int2(int(j),int(P.seed & 0x7fffffffu));
             float rv=randCell(hc,P.seed^0xB5297A4Du);
-            float tau=(float(j)+0.5f+0.35f*(2.0f*rv-1.0f))/max(peaks,1.0f);
+            float rvAmp=randCell(int2(int(j),911),P.seed^0x27D4EB2Fu);
+            float rvSig=randCell(int2(int(j),523),P.seed^0x165667B1u);
+            // Summits were evenly spaced at identical height, which reads as a
+            // manufactured comb rather than a range. `peakVariation` widens the
+            // spacing jitter and varies each summit's height and width.
+            float jitter=mix(0.35f,0.95f,sat(peakVariation));
+            float tau=(float(j)+0.5f+jitter*(2.0f*rv-1.0f))/max(peaks,1.0f);
             float2 c=mix(a,b,sat(tau));
             float along=dot(w-c,e);
-            float sigma=max(0.18f*radius,0.28f*len*scale/max(peaks,1.0f));
+            float sigma=max(0.18f*radius,0.28f*len*scale/max(peaks,1.0f))
+                        *mix(1.0f,mix(0.55f,1.60f,rvSig),sat(peakVariation));
             float peak=exp2(-(along*along)/max(sigma*sigma,1.0e-7f));
-            peakModulation=max(peakModulation,peak);
+            float amp=mix(1.0f,mix(0.30f,1.0f,rvAmp),sat(peakVariation));
+            // Probabilistic union, not max(): max() is only C0 where two
+            // summits' influence crosses, and that crease showed as hard
+            // straight cuts running across the ridge.
+            float v=sat(amp*peak);
+            peakModulation=peakModulation+v-peakModulation*v;
         }
         float summit=0.55f+0.45f*peakModulation;
-        return sat(height*envelope*summit*roughFactor(w,rough,P.seed));
+        float z=sat(envelope*summit+0.6f*foot);
+        float ground=surroundingRelief(w,surroundings,scale,P.seed);
+        return sat(ground*(1.0f-0.65f*z)
+                   + height*z*roughFactor(w,rough,P.seed));
     }
     if (kind == 4u) { // mountainside
         float scale=P.v[0], height=P.v[1], slope=P.v[2];
@@ -340,22 +403,55 @@ static inline float radialImpactValue(float2 p, constant PrimitiveParams& P) {
         float scale=P.v[0], height=P.v[1], depth=P.v[2], rimHeight=P.v[3];
         float rimWidth=P.v[4], irregularity=P.v[5], ejecta=P.v[6];
         float2 center=0.5f*float2(P.v[7],P.v[8]);
+        float floorFrac=P.v[9], terraces=P.v[10], surroundings=P.v[11];
         float radius=max(0.35f*scale,1.0e-5f);
         float2 d=p-center;
-        float angle=atan2(d.y,d.x);
-        float radialWarp=1.0f+0.12f*irregularity*
-            gradientNoise(float2(cos(angle),sin(angle))*3.0f,P.seed);
-        float rho=length(d)/(radius*max(radialWarp,0.7f));
-        float cavity=rho<1.0f ? -depth*pow(1.0f-rho*rho,2.0f) : 0.0f;
-        float rw=mix(0.025f,0.30f,rimWidth);
+        float invR=1.0f/max(radius,1.0e-5f);
+
+        // Every azimuthal variation is sampled in CARTESIAN space. Feeding
+        // atan2(y,x) into noise makes the angular coordinate vary infinitely
+        // fast near the centre and produces a starburst of spokes converging on
+        // a point -- the most obviously synthetic artifact a crater can have.
+        float2 dir=d/max(length(d),1.0e-5f);
+        float rimNoise=gradientNoise(dir*2.6f,P.seed)
+                      +0.5f*gradientNoise(dir*5.3f,P.seed^0x51ED270Bu);
+        float rho=length(d)/(radius*max(1.0f+0.14f*irregularity*rimNoise,0.7f));
+
+        // A real cavity has a flattened floor and a wall that steepens toward
+        // the rim; a paraboloid gives a rounded dent with no floor at all.
+        float ff=clamp(floorFrac,0.0f,0.85f);
+        float bowl=0.0f;
+        float terrace=0.0f;
+        if (rho<=ff) {
+            bowl=-depth;
+        } else if (rho<1.0f) {
+            float wall=(rho-ff)/max(1.0f-ff,1.0e-5f);
+            bowl=-depth*(1.0f-smooth5(wall));
+            // Slump benches, phase-perturbed so they read as broken arcs rather
+            // than machined concentric rings.
+            float benches=mix(2.0f,4.5f,sat(terraces));
+            float phase=wall*benches
+                       +0.35f*gradientNoise(d*(9.0f*invR),P.seed^0x2545F491u);
+            // Faded at BOTH ends of the wall: peaking at wall=0 puts a bench
+            // exactly on the floor edge, which reads as a second crater rim.
+            terrace=sat(terraces)*depth*0.07f*sin(6.2831853f*phase)
+                    *sat(1.0f-wall)*smooth5(sat(wall*2.5f));
+        }
+
+        float rw=mix(0.03f,0.30f,rimWidth);
         float rim=rimHeight*exp(-pow((rho-1.0f)/max(rw,0.01f),2.0f));
-        float extent=mix(0.5f,3.0f,ejecta);
-        float ext=ejecta*rimHeight*pow(max(rho,1.0f),-3.0f)*
-                  (1.0f-smoothstep(1.0f,1.0f+extent,rho));
-        float rays=1.0f+irregularity*
-            fbm(float2(angle*0.75f,log2(max(rho,1.0f))),1.0f,3u,2.0f,0.5f,
-                P.seed^0xDB4F0B91u);
-        return sat(0.5f+height*(cavity+rim+ext*rays));
+
+        // Ejecta thins with distance and is hummocky, not a smooth glacis.
+        float extent=mix(0.6f,3.5f,ejecta);
+        float texture=1.0f+0.6f*irregularity*
+            fbm(d*(7.0f*invR),1.0f,3u,2.0f,0.5f,P.seed^0xDB4F0B91u);
+        float blanket=ejecta*rimHeight*pow(max(rho,1.0f),-2.6f)
+                      *(1.0f-smoothstep(1.0f,1.0f+extent,rho))*texture;
+
+        float ground=surroundingRelief(p,surroundings,scale,P.seed);
+        float inside=sat(1.0f-rho);
+        return sat(0.5f + ground*(1.0f-0.8f*inside)
+                   + height*(bowl+terrace+rim+blanket));
     }
     if (P.kind == 10u) { // volcano
         float scale=P.v[0], height=P.v[1], mouth=P.v[2];

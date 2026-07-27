@@ -22,20 +22,24 @@ using P = TerrainPrimitiveParamDescriptor;
 constexpr P kRollingHills[] = {
     {"scale",0.65,0.05,1.5,false}, {"height",0.55,0,1,false},
     {"softness",0.70,0,1,false}, {"undulation",0.40,0,1,false},
-    {"warp",0.15,0,1,false}, {"seed",1337,0,9999,true},
+    {"warp",0.15,0,1,false}, {"detail",0.55,0,1,false},
+    {"seed",1337,0,9999,true},
 };
 constexpr P kCanyon[] = {
     {"scale",0.75,0.05,1.5,false}, {"height",0.78,0,1,false},
     {"depth",0.55,0,1,false}, {"width",0.10,0.02,0.6,false},
     {"branches",12,1,32,true}, {"wallSharpness",0.65,0,1,false},
-    {"roughness",0.25,0,1,false}, {"seed",1337,0,9999,true},
+    {"roughness",0.25,0,1,false}, {"benching",0.45,0,1,false},
+    {"seed",1337,0,9999,true},
 };
 constexpr P kCrater[] = {
     {"scale",0.45,0.05,1.5,false}, {"height",0.80,0,1,false},
     {"depth",0.55,0,1,false}, {"rimHeight",0.22,0,1,false},
-    {"rimWidth",0.18,0,1,false}, {"irregularity",0.15,0,1,false},
-    {"ejecta",0.20,0,1,false}, {"x",0,-1,1,false},
-    {"y",0,-1,1,false}, {"seed",1337,0,9999,true},
+    {"rimWidth",0.18,0,1,false}, {"irregularity",0.45,0,1,false},
+    {"ejecta",0.35,0,1,false}, {"x",0,-1,1,false},
+    {"y",0,-1,1,false}, {"floor",0.35,0,0.85,false},
+    {"terraces",0.50,0,1,false}, {"surroundings",0.30,0,1,false},
+    {"seed",1337,0,9999,true},
 };
 constexpr P kCraterField[] = {
     {"scale",0.22,0.05,1.5,false}, {"height",0.75,0,1,false},
@@ -53,7 +57,8 @@ constexpr P kMountain[] = {
     {"scale",0.65,0.05,1.5,false}, {"height",0.90,0,1,false},
     {"bulk",0.58,0,1,false}, {"roughness",0.38,0,1,false},
     {"warp",0.20,0,1,false}, {"x",0,-1,1,false},
-    {"y",0,-1,1,false}, {"seed",1337,0,9999,true},
+    {"y",0,-1,1,false}, {"surroundings",0.30,0,1,false},
+    {"seed",1337,0,9999,true},
 };
 constexpr P kMountainRange[] = {
     {"scale",0.70,0.05,1.5,false}, {"height",0.90,0,1,false},
@@ -61,6 +66,7 @@ constexpr P kMountainRange[] = {
     {"direction",25,0,360,false}, {"peaks",5,1,12,true},
     {"roughness",0.40,0,1,false}, {"warp",0.25,0,1,false},
     {"x",0,-1,1,false}, {"y",0,-1,1,false},
+    {"surroundings",0.30,0,1,false}, {"peakVariation",0.65,0,1,false},
     {"seed",1337,0,9999,true},
 };
 constexpr P kMountainSide[] = {
