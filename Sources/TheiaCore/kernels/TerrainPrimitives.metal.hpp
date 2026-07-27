@@ -14,7 +14,7 @@ struct PrimitiveParams {
     uint height;
     uint kind;
     uint seed;
-    float v[12];
+    float v[16];
 };
 
 static inline float sat(float x) {
@@ -240,16 +240,48 @@ static inline float massLineValue(float2 p, constant PrimitiveParams& P) {
         float angle=toRadians(P.v[4]), peaks=P.v[5], rough=P.v[6];
         float2 center=0.5f*float2(P.v[8],P.v[9]);
         float surroundings=P.v[10], peakVariation=P.v[11];
+        float arc=P.v[12], sinuosity=P.v[13];
         float2 e=float2(cos(angle),sin(angle));
-        float2 a=center-0.5f*len*scale*e;
-        float2 b=center+0.5f*len*scale*e;
+        float2 t=float2(-e.y,e.x);
         float2 w=warpPoint(p,scale,P.v[7],P.seed);
+        float span=len*scale;
         float radius=max(width*scale,1.0e-4f);
-        float sd=sdSegment(w,a,b,radius);
-        float t=sd/radius;
-        float envelope=pow(sat(-t),1.35f);
-        // Footslope past the ridge body, same reason as `mountain`.
-        float outside=max(t,0.0f);
+
+        // Fold-thrust belts are linear, sinuous (salients and recesses) or
+        // arcuate (oroclines) in map view; a perfectly straight axis is the
+        // least common of the three and reads as a manufactured wall. The spine
+        // bows by `arc` and wanders along-strike by `sinuosity`.
+        // Distance to the SEGMENTS of the spine, not to sampled points.
+        // Nearest-point-of-N is piecewise constant, so the field creases along
+        // the Voronoi boundaries between samples and renders as hard slashes
+        // radiating from the ridge.
+        const uint kSpineSegments=20u;
+        float bestDistance=1.0e9f;
+        float bestTau=0.0f;
+        float2 previous=center-0.5f*span*e;
+        for (uint k=1u;k<=kSpineSegments;++k) {
+            float s0=float(k)/float(kSpineSegments);
+            float centred=2.0f*s0-1.0f;
+            float bow=arc*span*0.45f*(1.0f-centred*centred);
+            float wander=sinuosity*span*0.22f*
+                gradientNoise(float2(s0*2.6f,7.3f),P.seed^0x6C8E9CF5u);
+            float2 current=center+span*(s0-0.5f)*e+(bow+wander)*t;
+            float2 pa=w-previous;
+            float2 ba=current-previous;
+            float hh=sat(dot(pa,ba)/max(dot(ba,ba),1.0e-9f));
+            float dist=length(pa-ba*hh);
+            if (dist<bestDistance) {
+                bestDistance=dist;
+                bestTau=(float(k-1u)+hh)/float(kSpineSegments);
+            }
+            previous=current;
+        }
+        // Distance to a line has a gradient discontinuity ON the line, which
+        // renders as a razor-thin bright crest. Rounding the distance near zero
+        // gives the ridge a real summit width instead of a knife edge.
+        float rounded=sqrt(bestDistance*bestDistance+0.010f*radius*radius);
+        float envelope=pow(sat(1.0f-rounded/radius),1.35f);
+        float outside=max(bestDistance/radius-1.0f,0.0f);
         float foot=0.22f*exp(-1.6f*outside*outside);
 
         float peakModulation=0.0f;
@@ -261,18 +293,26 @@ static inline float massLineValue(float2 p, constant PrimitiveParams& P) {
             float rvAmp=randCell(int2(int(j),911),P.seed^0x27D4EB2Fu);
             float rvSig=randCell(int2(int(j),523),P.seed^0x165667B1u);
             // Summits were evenly spaced at identical height, which reads as a
-            // manufactured comb rather than a range. `peakVariation` widens the
-            // spacing jitter and varies each summit's height and width.
+            // manufactured comb rather than a range.
             float jitter=mix(0.35f,0.95f,sat(peakVariation));
-            float tau=(float(j)+0.5f+jitter*(2.0f*rv-1.0f))/max(peaks,1.0f);
-            float2 c=mix(a,b,sat(tau));
-            float along=dot(w-c,e);
-            float sigma=max(0.18f*radius,0.28f*len*scale/max(peaks,1.0f))
+            float tau=sat((float(j)+0.5f+jitter*(2.0f*rv-1.0f))
+                          /max(peaks,1.0f));
+            // Summit position is the actual point on the spine, and influence
+            // is true 2D distance to it. Deriving it from `bestTau` inherited
+            // that value's jump wherever the nearest spine segment changes,
+            // which rendered as thin slashes across the ridge.
+            float centredTau=2.0f*tau-1.0f;
+            float bowTau=arc*span*0.45f*(1.0f-centredTau*centredTau);
+            float wanderTau=sinuosity*span*0.22f*
+                gradientNoise(float2(tau*2.6f,7.3f),P.seed^0x6C8E9CF5u);
+            float2 summitPoint=center+span*(tau-0.5f)*e+(bowTau+wanderTau)*t;
+            float along=length(w-summitPoint);
+            float sigma=max(0.18f*radius,0.28f*span/max(peaks,1.0f))
                         *mix(1.0f,mix(0.55f,1.60f,rvSig),sat(peakVariation));
             float peak=exp2(-(along*along)/max(sigma*sigma,1.0e-7f));
             float amp=mix(1.0f,mix(0.30f,1.0f,rvAmp),sat(peakVariation));
             // Probabilistic union, not max(): max() is only C0 where two
-            // summits' influence crosses, and that crease showed as hard
+            // summits' influence crosses and that crease showed as hard
             // straight cuts running across the ridge.
             float v=sat(amp*peak);
             peakModulation=peakModulation+v-peakModulation*v;
@@ -403,55 +443,61 @@ static inline float radialImpactValue(float2 p, constant PrimitiveParams& P) {
         float scale=P.v[0], height=P.v[1], depth=P.v[2], rimHeight=P.v[3];
         float rimWidth=P.v[4], irregularity=P.v[5], ejecta=P.v[6];
         float2 center=0.5f*float2(P.v[7],P.v[8]);
-        float floorFrac=P.v[9], terraces=P.v[10], surroundings=P.v[11];
+        float complexity=P.v[9], terraces=P.v[10], surroundings=P.v[11];
         float radius=max(0.35f*scale,1.0e-5f);
         float2 d=p-center;
         float invR=1.0f/max(radius,1.0e-5f);
 
-        // Every azimuthal variation is sampled in CARTESIAN space. Feeding
-        // atan2(y,x) into noise makes the angular coordinate vary infinitely
-        // fast near the centre and produces a starburst of spokes converging on
-        // a point -- the most obviously synthetic artifact a crater can have.
+        // Azimuthal variation is sampled in CARTESIAN space. Feeding atan2(y,x)
+        // into noise makes the angular coordinate vary infinitely fast near the
+        // centre and produces a starburst of spokes converging on a point.
         float2 dir=d/max(length(d),1.0e-5f);
         float rimNoise=gradientNoise(dir*2.6f,P.seed)
                       +0.5f*gradientNoise(dir*5.3f,P.seed^0x51ED270Bu);
         float rho=length(d)/(radius*max(1.0f+0.14f*irregularity*rimNoise,0.7f));
 
-        // A real cavity has a flattened floor and a wall that steepens toward
-        // the rim; a paraboloid gives a rounded dent with no floor at all.
-        float ff=clamp(floorFrac,0.0f,0.85f);
+        // Pike (1977) and the lunar morphometry that follows it: a SIMPLE
+        // crater is a paraboloid bowl at d/D ~ 0.2. Flat floors, wall terraces
+        // and a central peak belong to COMPLEX craters past the simple-to-
+        // complex transition, so `complexity` morphs between the two regimes
+        // rather than both being present at once. An earlier flat floor plus a
+        // smooth5 wall gave zero gradient at both ends, which rendered as a
+        // punched cylinder rather than an impact.
+        float floorFrac=sat(complexity)*0.45f;
         float bowl=0.0f;
         float terrace=0.0f;
-        if (rho<=ff) {
+        if (rho<=floorFrac) {
             bowl=-depth;
         } else if (rho<1.0f) {
-            float wall=(rho-ff)/max(1.0f-ff,1.0e-5f);
-            bowl=-depth*(1.0f-smooth5(wall));
-            // Slump benches, phase-perturbed so they read as broken arcs rather
-            // than machined concentric rings.
+            float wall=(rho-floorFrac)/max(1.0f-floorFrac,1.0e-5f);
+            bowl=-depth*(1.0f-wall*wall);
+            // Terrace zone width grows with crater size, so terracing is tied
+            // to complexity rather than applied to every crater.
             float benches=mix(2.0f,4.5f,sat(terraces));
             float phase=wall*benches
                        +0.35f*gradientNoise(d*(9.0f*invR),P.seed^0x2545F491u);
-            // Faded at BOTH ends of the wall: peaking at wall=0 puts a bench
-            // exactly on the floor edge, which reads as a second crater rim.
-            terrace=sat(terraces)*depth*0.07f*sin(6.2831853f*phase)
-                    *sat(1.0f-wall)*smooth5(sat(wall*2.5f));
+            terrace=sat(terraces)*sat(complexity)*depth*0.09f
+                    *sin(6.2831853f*phase)*sat(1.0f-wall)
+                    *smooth5(sat(wall*2.5f));
         }
+        // Central peak: complex craters only.
+        float peak=sat(complexity)*depth*0.42f
+                   *exp(-(rho*rho)/max(0.055f,1.0e-5f));
 
         float rw=mix(0.03f,0.30f,rimWidth);
         float rim=rimHeight*exp(-pow((rho-1.0f)/max(rw,0.01f),2.0f));
 
-        // Ejecta thins with distance and is hummocky, not a smooth glacis.
+        // Ejecta thins roughly as r^-3 and is hummocky, not a smooth glacis.
         float extent=mix(0.6f,3.5f,ejecta);
         float texture=1.0f+0.6f*irregularity*
             fbm(d*(7.0f*invR),1.0f,3u,2.0f,0.5f,P.seed^0xDB4F0B91u);
-        float blanket=ejecta*rimHeight*pow(max(rho,1.0f),-2.6f)
+        float blanket=ejecta*rimHeight*pow(max(rho,1.0f),-3.0f)
                       *(1.0f-smoothstep(1.0f,1.0f+extent,rho))*texture;
 
         float ground=surroundingRelief(p,surroundings,scale,P.seed);
         float inside=sat(1.0f-rho);
         return sat(0.5f + ground*(1.0f-0.8f*inside)
-                   + height*(bowl+terrace+rim+blanket));
+                   + height*(bowl+terrace+peak+rim+blanket));
     }
     if (P.kind == 10u) { // volcano
         float scale=P.v[0], height=P.v[1], mouth=P.v[2];
@@ -478,6 +524,7 @@ static inline float repeatingFieldValue(float2 p, constant PrimitiveParams& P) {
     if (P.kind == 11u) { // craterfield
         float scale=P.v[0], height=P.v[1], density=P.v[2];
         float variation=P.v[3], rimHeight=P.v[4], age=P.v[5], irregular=P.v[6];
+        float surroundings=P.v[7];
         float grid=ceil(sqrt(max(density,1.0f)));
         float2 cellP=(p+0.5f)*grid;
         int2 base=int2(floor(cellP));
@@ -493,30 +540,47 @@ static inline float repeatingFieldValue(float2 p, constant PrimitiveParams& P) {
                 if (randCell(c,P.seed^0x4F1BBCDCu)>=occupancy) continue;
                 float2 center=featurePoint(c,P.seed)/grid-0.5f;
                 float rv=randCell(c,P.seed^0xB5297A4Du);
-                float radius=max(0.15f*scale*mix(1.0f-variation,
-                                                1.0f+variation,rv),1.0e-4f);
+                // Crater size-frequency follows a steep power law: many small,
+                // very few large. Sampling radius uniformly gave a field of
+                // near-identical stamps, which is the giveaway that it was
+                // generated rather than accumulated over time.
+                float sizeExponent=mix(1.0f,3.2f,sat(variation));
+                float radius=max(0.15f*scale*
+                                 mix(0.12f,1.0f,pow(max(rv,1.0e-4f),
+                                                    sizeExponent)),
+                                 1.0e-4f);
+                // Craters accumulate over time, so each carries its own degree
+                // of degradation; one global age makes them all contemporaries.
+                float ageJitter=randCell(c,P.seed^0x68BC21EBu);
+                float localAge=sat(age*mix(0.35f,1.65f,ageJitter));
                 float2 d=p-center;
-                float a=atan2(d.y,d.x);
                 float rho=length(d)/radius;
-                float shape=1.0f+0.10f*irregular*
-                    gradientNoise(float2(cos(a),sin(a))*3.0f,P.seed^uint(c.x*31+c.y));
+                float2 dir=d/max(length(d),1.0e-5f);
+                // Cartesian, not polar: noise on atan2 spokes at the centre.
+                float shape=1.0f+0.12f*irregular*
+                    gradientNoise(dir*3.0f+float2(float(c.x),float(c.y)),
+                                  P.seed^0x9E3779B9u);
                 rho/=max(shape,0.75f);
-                float cavity=rho<1.0f ?
-                    -mix(1.0f,0.45f,age)*pow(1.0f-rho*rho,2.0f) : 0.0f;
+                // Paraboloid bowl (Pike 1977), shallowing as the crater ages.
+                float cavity=rho<1.0f
+                    ? -mix(1.0f,0.35f,localAge)*(1.0f-rho*rho) : 0.0f;
                 float pixelRadius=
                     radius*float(min(P.width,P.height));
                 float pixelRim=2.25f/max(pixelRadius,1.0f);
                 float normalizedRimWidth=max(0.16f,pixelRim);
                 float rimResolution=smoothstep(2.0f,5.0f,pixelRadius);
-                float rim=mix(1.0f,0.2f,age)*rimHeight*rimResolution*
+                float rim=mix(1.0f,0.15f,localAge)*rimHeight*rimResolution*
                           exp(-pow((rho-1.0f)/normalizedRimWidth,2.0f));
-                float ejecta=mix(0.35f,0.0f,age)*rimHeight*
+                float ejecta=mix(0.35f,0.0f,localAge)*rimHeight*
                              pow(max(rho,1.0f),-3.0f)*
                              (1.0f-smoothstep(1.0f,2.0f,rho));
                 z += cavity+rim+ejecta;
             }
         }
-        return sat(0.5f+height*z);
+        // Regolith between the craters. A cratered plain with a perfectly
+        // smooth surface between impacts reads as a stamped texture.
+        return sat(0.5f+surroundingRelief(p,surroundings,scale,P.seed)
+                   +height*z);
     }
     if (P.kind == 12u) { // dunesea
         float scale=P.v[0], height=P.v[1], angle=toRadians(P.v[2]);
@@ -536,12 +600,34 @@ static inline float repeatingFieldValue(float2 p, constant PrimitiveParams& P) {
         float phaseChaos=0.35f*chaos*
             fbm(float2(q.x,0.55f*q.y),1.20f/scale,
                 4u,2.0f,0.5f,P.seed^0x4F1BBCDCu);
-        float phase=fract((along/scale)*localFrequency+meander+phaseChaos);
+        // Seif dunes MEANDER: their crests are sinuous, with a meander
+        // wavelength about an order of magnitude larger than dune height.
+        // Straight parallel crests are the giveaway that a field was generated
+        // by a periodic function rather than by wind.
+        float crestMeander=P.v[7];
+        float defects=P.v[8];
+        float sinuous=crestMeander*1.6f*
+            fbm(float2(q.x*0.55f,q.y*0.08f),0.55f/scale,
+                4u,2.0f,0.5f,P.seed^0x1B56C4E9u);
+        float rawPhase=(along/scale)*localFrequency+meander+phaseChaos+sinuous;
+        float crestIndex=floor(rawPhase);
+        float phase=fract(rawPhase);
+        // Per-crest identity. Neighbouring dunes in a real sand sea differ in
+        // height and sharpness; identical crests read as a tiled texture.
+        float crestId=randCell(int2(int(crestIndex),0),P.seed^0x2545F491u);
+        float crestAmplitude=mix(0.30f,1.0f,crestId);
+        // Along-crest defects: a crest dies out and its neighbour takes over,
+        // which is what produces the Y-junctions seen in real dune fields.
+        float defectField=fbm(float2(q.x*0.75f,crestIndex*4.1f),
+                              0.85f/scale,3u,2.0f,0.5f,P.seed^0xA24BAED4u);
+        // Centred so the gaps actually open: offsetting by (1-defects) put the
+        // threshold outside the noise range, and no crest ever terminated.
+        float alive=smoothstep(-0.30f,0.30f,defectField+(0.45f-defects));
         float stoss=0.5f+0.45f*asym;
         float rise=smoothstep(0.0f,1.0f,phase/stoss);
         float fall=1.0f-smoothstep(0.0f,1.0f,(phase-stoss)/(1.0f-stoss));
         float dune=phase<=stoss ? rise : fall;
-        dune=pow(sat(dune),mix(2.5f,0.45f,sharp));
+        dune=pow(sat(dune),mix(2.5f,0.45f,sharp))*crestAmplitude*alive;
         float envelope=clamp((0.75f+0.25f*fbm(p,0.5f/scale,3u,2.0f,0.5f,
                                              P.seed^0xC13FA9A9u))*
                              (1.0f+chaos*fbm(p,4.0f/scale,3u,2.0f,0.5f,

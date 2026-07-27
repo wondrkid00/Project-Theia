@@ -34,10 +34,10 @@ constexpr P kCanyon[] = {
 };
 constexpr P kCrater[] = {
     {"scale",0.45,0.05,1.5,false}, {"height",0.80,0,1,false},
-    {"depth",0.55,0,1,false}, {"rimHeight",0.22,0,1,false},
+    {"depth",0.26,0,1,false}, {"rimHeight",0.14,0,1,false},
     {"rimWidth",0.18,0,1,false}, {"irregularity",0.45,0,1,false},
     {"ejecta",0.35,0,1,false}, {"x",0,-1,1,false},
-    {"y",0,-1,1,false}, {"floor",0.35,0,0.85,false},
+    {"y",0,-1,1,false}, {"complexity",0.30,0,1,false},
     {"terraces",0.50,0,1,false}, {"surroundings",0.30,0,1,false},
     {"seed",1337,0,9999,true},
 };
@@ -45,13 +45,15 @@ constexpr P kCraterField[] = {
     {"scale",0.22,0.05,1.5,false}, {"height",0.75,0,1,false},
     {"density",18,1,64,true}, {"sizeVariation",0.60,0,1,false},
     {"rimHeight",0.20,0,1,false}, {"age",0.35,0,1,false},
-    {"irregularity",0.18,0,1,false}, {"seed",1337,0,9999,true},
+    {"irregularity",0.18,0,1,false}, {"surroundings",0.25,0,1,false},
+    {"seed",1337,0,9999,true},
 };
 constexpr P kDuneSea[] = {
     {"scale",0.18,0.05,1.5,false}, {"height",0.42,0,1,false},
     {"direction",0,0,360,false}, {"asymmetry",0.65,0,1,false},
     {"sharpness",0.55,0,1,false}, {"chaos",0.25,0,1,false},
-    {"warp",0.15,0,1,false}, {"seed",1337,0,9999,true},
+    {"warp",0.15,0,1,false}, {"crestMeander",0.55,0,1,false},
+    {"defects",0.45,0,1,false}, {"seed",1337,0,9999,true},
 };
 constexpr P kMountain[] = {
     {"scale",0.65,0.05,1.5,false}, {"height",0.90,0,1,false},
@@ -67,6 +69,7 @@ constexpr P kMountainRange[] = {
     {"roughness",0.40,0,1,false}, {"warp",0.25,0,1,false},
     {"x",0,-1,1,false}, {"y",0,-1,1,false},
     {"surroundings",0.30,0,1,false}, {"peakVariation",0.65,0,1,false},
+    {"arc",0.35,-1,1,false}, {"sinuosity",0.45,0,1,false},
     {"seed",1337,0,9999,true},
 };
 constexpr P kMountainSide[] = {
@@ -145,7 +148,7 @@ struct PrimitiveParamsGPU {
     std::uint32_t height;
     std::uint32_t kind;
     std::uint32_t seed;
-    float values[12];
+    float values[16];
 };
 
 bool readParams(const TerrainPrimitiveNode& node,

@@ -1675,20 +1675,21 @@ let terrainPrimitiveDefaults: [(type: String, params: [(String, Double)])] = [
         ("benching", 0.45), ("seed", 1337)
     ]),
     ("crater", [
-        ("scale", 0.45), ("height", 0.80), ("depth", 0.55),
-        ("rimHeight", 0.22), ("rimWidth", 0.18), ("irregularity", 0.45),
-        ("ejecta", 0.35), ("x", 0), ("y", 0), ("floor", 0.35),
+        ("scale", 0.45), ("height", 0.80), ("depth", 0.26),
+        ("rimHeight", 0.14), ("rimWidth", 0.18), ("irregularity", 0.45),
+        ("ejecta", 0.35), ("x", 0), ("y", 0), ("complexity", 0.30),
         ("terraces", 0.50), ("surroundings", 0.30), ("seed", 1337)
     ]),
     ("craterfield", [
         ("scale", 0.22), ("height", 0.75), ("density", 18),
         ("sizeVariation", 0.60), ("rimHeight", 0.20), ("age", 0.35),
-        ("irregularity", 0.18), ("seed", 1337)
+        ("irregularity", 0.18), ("surroundings", 0.25), ("seed", 1337)
     ]),
     ("dunesea", [
         ("scale", 0.18), ("height", 0.42), ("direction", 0),
         ("asymmetry", 0.65), ("sharpness", 0.55), ("chaos", 0.25),
-        ("warp", 0.15), ("seed", 1337)
+        ("warp", 0.15), ("crestMeander", 0.55), ("defects", 0.45),
+        ("seed", 1337)
     ]),
     ("mountain", [
         ("scale", 0.65), ("height", 0.90), ("bulk", 0.58),
@@ -1699,7 +1700,8 @@ let terrainPrimitiveDefaults: [(type: String, params: [(String, Double)])] = [
         ("scale", 0.70), ("height", 0.90), ("length", 1.25),
         ("width", 0.24), ("direction", 25), ("peaks", 5),
         ("roughness", 0.40), ("warp", 0.25), ("x", 0), ("y", 0),
-        ("surroundings", 0.30), ("peakVariation", 0.65), ("seed", 1337)
+        ("surroundings", 0.30), ("peakVariation", 0.65),
+        ("arc", 0.35), ("sinuosity", 0.45), ("seed", 1337)
     ]),
     ("mountainside", [
         ("scale", 0.90), ("height", 0.85), ("slope", 0.65),

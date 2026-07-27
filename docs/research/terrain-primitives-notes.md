@@ -758,3 +758,71 @@ fourth octave perturbs the traced channels enough to weaken the carve measurably
 benches at roughly a fifth of that cost. Benching uses `smooth5` within each
 band; the resulting near-zero gradient at band edges is why the effect is mixed
 rather than applied outright, since flats stall the river tracing.
+
+## Reference-grounded morphology
+
+Three primitives were rebuilt against published morphometry rather than tuned by
+eye, because tuning alone reproduces the silhouette without the structure.
+
+### Crater — Pike (1977) and lunar morphometry
+
+A **simple** crater is a paraboloid bowl at a depth/diameter ratio of about
+**0.2**. Flat floors, wall terraces and a central peak belong to **complex**
+craters past the simple-to-complex transition (~10-20 km on the Moon), and
+terrace zone width grows with diameter. Applying all of them at once, as the
+first rebuild did, produces a form that exists nowhere.
+
+`complexity` now morphs between the two regimes: at 0 the cavity is a plain
+paraboloid; raising it opens a flat floor, enables terracing and raises a
+central peak. Default `depth` dropped 0.55 -> 0.26 to approach the observed
+d/D. The earlier flat floor joined to a `smooth5` wall had zero gradient at both
+ends and rendered as a punched cylinder.
+
+References: Pike, R. J. (1977), *Size-dependence in the shape of fresh impact
+craters on the Moon*; Krüger et al. (2018), JGR Planets 123, deriving
+morphometric parameters and the simple-to-complex transition diameter.
+
+### Crater field — size-frequency distribution and superposition
+
+Impact populations follow a steep power law: many small craters, very few large.
+Sampling radius uniformly gave a field of near-identical stamps, which is the
+clearest signature of generation rather than accumulation. Radius is now drawn
+through `pow(u, exponent)` with the exponent driven by `sizeVariation`.
+
+Craters also accumulate over time, so each carries its own degradation state;
+one global `age` made every crater a contemporary of the others. Age is now
+jittered per crater, shallowing the cavity and muting rim and ejecta.
+
+### Dune sea — seif morphology
+
+Seif dunes **meander**: crests are sinuous, with a meander wavelength roughly an
+order of magnitude larger than dune height. Straight parallel crests are the
+signature of a periodic function, not of wind.
+
+Real fields are also measured by **defect density** — crests terminate and
+neighbours take over, producing Y-junctions. `crestMeander` bends the crest
+line; `defects` opens the terminations; and each crest draws its own amplitude
+so neighbours differ. The defect threshold must be centred on the noise range:
+an early version offset it by `(1 - defects)`, which put the threshold outside
+the range the noise could reach, so no crest ever terminated.
+
+### Mountain range — fold-thrust belt geometry
+
+Fold-and-thrust belts are **linear, sinuous** (salients and recesses) or
+**arcuate** (oroclines) in map view. A perfectly straight axis is the least
+common of the three and reads as a manufactured wall. `arc` bows the spine and
+`sinuosity` makes it wander along-strike.
+
+Two implementation traps, both of which rendered as hard slashes across the
+ridge:
+
+- Distance must be taken to the spine's **segments**, not to sampled points.
+  Nearest-point-of-N is piecewise constant and creases along the Voronoi
+  boundaries between samples.
+- Summit influence must use **true 2D distance to the summit position**, not a
+  parameter derived from the nearest-segment search. That parameter jumps
+  wherever the nearest segment changes.
+
+Distance to a line also has a gradient discontinuity *on* the line, which
+renders as a razor-thin bright crest; the distance is softened near zero so the
+ridge has a real summit width.
