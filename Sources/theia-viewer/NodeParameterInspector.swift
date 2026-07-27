@@ -318,13 +318,12 @@ private struct NodePresentation {
             return terrain(type, tint: .indigo)
         case "canyon":
             return terrain(type, tint: .orange)
-        case "crater", "craterfield":
+        case "crater":
             return terrain(type, tint: .gray)
         case "dunesea":
             return terrain(type, tint: .yellow)
         case "mountainside", "rugged":
             return terrain(type, tint: .brown)
-        case "plates":
             return terrain(type, tint: .teal)
         case "ridge":
             return terrain(type, tint: .purple)
@@ -578,10 +577,6 @@ enum TerrainParameterCatalog {
             "scale", "height", "depth", "rimHeight",
             "rimWidth", "irregularity", "ejecta", "x", "y", "seed",
         ],
-        "craterfield": [
-            "scale", "height", "density", "sizeVariation",
-            "rimHeight", "age", "irregularity", "seed",
-        ],
         "dunesea": [
             "scale", "height", "direction", "asymmetry",
             "sharpness", "chaos", "warp", "seed",
@@ -589,10 +584,6 @@ enum TerrainParameterCatalog {
         "mountainside": [
             "scale", "height", "slope", "direction",
             "peak", "detail", "warp", "x", "y", "seed",
-        ],
-        "plates": [
-            "scale", "height", "flatness", "boundaryUplift",
-            "tilt", "warp", "seed",
         ],
         "ridge": [
             "scale", "height", "length", "width", "direction",
@@ -622,10 +613,8 @@ enum TerrainParameterCatalog {
         "mountainrange": ["scale", "height", "length", "width", "direction"],
         "canyon": ["scale", "height", "depth", "width"],
         "crater": ["scale", "height", "depth", "rimHeight"],
-        "craterfield": ["scale", "height", "density", "sizeVariation"],
         "dunesea": ["scale", "height", "direction", "asymmetry"],
         "mountainside": ["scale", "height", "slope", "direction"],
-        "plates": ["scale", "height", "flatness", "boundaryUplift"],
         "ridge": ["scale", "height", "length", "width", "direction"],
         "rugged": ["scale", "height", "bulk"],
         "slump": ["scale", "height", "collapse", "direction"],

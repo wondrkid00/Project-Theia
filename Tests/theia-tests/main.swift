@@ -1680,11 +1680,6 @@ let terrainPrimitiveDefaults: [(type: String, params: [(String, Double)])] = [
         ("ejecta", 0.35), ("x", 0), ("y", 0), ("complexity", 0.30),
         ("terraces", 0.50), ("surroundings", 0.30), ("seed", 1337)
     ]),
-    ("craterfield", [
-        ("scale", 0.22), ("height", 0.75), ("density", 18),
-        ("sizeVariation", 0.60), ("rimHeight", 0.20), ("age", 0.35),
-        ("irregularity", 0.18), ("surroundings", 0.25), ("seed", 1337)
-    ]),
     ("dunesea", [
         ("scale", 0.18), ("height", 0.42), ("direction", 0),
         ("asymmetry", 0.65), ("sharpness", 0.55), ("chaos", 0.25),
@@ -1707,11 +1702,6 @@ let terrainPrimitiveDefaults: [(type: String, params: [(String, Double)])] = [
         ("scale", 0.90), ("height", 0.85), ("slope", 0.65),
         ("direction", 25), ("peak", 0.50), ("detail", 0.35),
         ("warp", 0.15), ("x", 0), ("y", 0), ("seed", 1337)
-    ]),
-    ("plates", [
-        ("scale", 0.35), ("height", 0.70), ("flatness", 0.75),
-        ("boundaryUplift", 0.35), ("tilt", 0.20), ("warp", 0.10),
-        ("seed", 1337)
     ]),
     ("ridge", [
         ("scale", 0.75), ("height", 0.85), ("length", 1.30),
@@ -1949,7 +1939,6 @@ h.test("Terrain primitive parameter families clamp at their public limits") {
         ("ridge", "width", 0.6, 10),
         ("canyon", "branches", 1, -10),
         ("canyon", "branches", 32, 100),
-        ("craterfield", "density", 64, 100),
         ("mountainrange", "peaks", 12, 100),
         ("slump", "lobes", 8, 100),
         ("uplift", "folds", 12, 100),
@@ -2191,61 +2180,6 @@ h.test("Rolling hills are lower-frequency than rugged terrain") {
              "rugged detail \(ruggedDetail) did not exceed rolling \(rollingDetail)")
 }
 
-h.test("Plate terrain has broad interiors and sharper boundaries") {
-    let size = 128
-    let values = evalGraphHeightsJSON(
-        primitiveJSON("plates", params: "{ \"seed\": 773 }", size: size),
-        sink: "terrain", size: UInt32(size))
-    var gradients: [Float] = []
-    for y in 0..<(size - 1) {
-        for x in 0..<(size - 1) {
-            let i = y * size + x
-            gradients.append(max(abs(values[i + 1] - values[i]),
-                                 abs(values[i + size] - values[i])))
-        }
-    }
-    gradients.sort()
-    let interior = gradients[gradients.count / 2]
-    let boundary = gradients[Int(Double(gradients.count - 1) * 0.95)]
-    h.expect(boundary > interior * 1.8 + 0.001,
-             "plate boundary/interior separation is weak: \(interior), \(boundary)")
-}
-
-h.test("Plate tilt does not introduce regular cellular-grid seams") {
-    let size = 128
-    let values = evalGraphHeightsJSON(
-        primitiveJSON(
-            "plates",
-            params: """
-            {
-              "seed": 773, "scale": 0.25, "height": 1,
-              "flatness": 1, "boundaryUplift": 0,
-              "tilt": 1, "warp": 0
-            }
-            """,
-            size: size),
-        sink: "terrain", size: UInt32(size))
-    var allJumps: [Float] = []
-    var latticeJumps: [Float] = []
-    let latticeColumns = [1, 2, 3].map {
-        Int(round(Double($0) * 0.25 * Double(size - 1)))
-    }
-    for y in 0..<size {
-        for x in 1..<size {
-            let jump = abs(values[y * size + x] - values[y * size + x - 1])
-            allJumps.append(jump)
-            if latticeColumns.contains(x) {
-                latticeJumps.append(jump)
-            }
-        }
-    }
-    let globalMean = allJumps.reduce(0, +) / Float(allJumps.count)
-    let latticeMean = latticeJumps.reduce(0, +) / Float(latticeJumps.count)
-    h.expect(latticeMean < globalMean * 4 + 0.002,
-             "plate tilt reveals its cellular lookup grid: "
-             + "\(latticeMean) vs global \(globalMean)")
-}
-
 h.test("Slump direction and lobe count control its structure") {
     @MainActor
     func slump(_ direction: Int, _ lobes: Int) -> [Float] {
@@ -2268,26 +2202,8 @@ h.test("Slump direction and lobe count control its structure") {
              "slump lobe count should affect deposits")
 }
 
-h.test("Crater field depth scales with diameter and dunes do not tile") {
+h.test("Dune sea crests do not tile") {
     let size = 192
-    // A power-law size distribution makes small craters numerous, so giving
-    // every crater the same absolute depth turned them into needle-thin pits
-    // punched far below the plain. Depth must scale with diameter (d/D ~ 0.2).
-    let field = evalGraphHeightsJSON(
-        primitiveJSON("craterfield", params: "{ \"seed\": 404 }", size: size),
-        sink: "terrain", size: UInt32(size))
-    h.expect(field.count == size * size, "crater field must evaluate")
-    var needles = 0
-    for y in 1..<(size - 1) {
-        for x in 1..<(size - 1) {
-            let i = y * size + x
-            let lowestNeighbour = min(min(field[i - 1], field[i + 1]),
-                                      min(field[i - size], field[i + size]))
-            if lowestNeighbour - field[i] > 0.10 { needles += 1 }
-        }
-    }
-    h.expect(needles == 0, "crater field punched \(needles) needle pits")
-
     // Hashing per crest index gave each dune a constant, so the value jumped at
     // every phase wrap and the field rendered as rectangular tiles. Detect a
     // seam as a column whose neighbours differ far more than the field's own

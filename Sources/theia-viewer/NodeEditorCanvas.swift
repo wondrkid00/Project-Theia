@@ -98,8 +98,8 @@ struct NodeTypeGroup: Identifiable {
 enum NodeTypeCatalog {
     static let terrainTypes = [
         "rollinghills", "mountain", "mountainrange", "canyon",
-        "crater", "craterfield", "dunesea", "mountainside",
-        "plates", "ridge", "rugged", "slump", "uplift", "volcano",
+        "crater", "dunesea", "mountainside",
+        "ridge", "rugged", "slump", "uplift", "volcano",
     ]
     static let quickStartTypes = [
         "rollinghills", "mountain", "mountainrange", "canyon",
@@ -183,7 +183,6 @@ enum NodeTypeCatalog {
         switch type {
         case "rollinghills": return "Rolling Hills"
         case "mountainrange": return "Mountain Range"
-        case "craterfield": return "Crater Field"
         case "dunesea": return "Dune Sea"
         case "mountainside": return "Mountain Side"
         case "scalebias": return "Scale Bias"
@@ -205,10 +204,8 @@ enum NodeTypeCatalog {
         case "mountainrange": return "mountain.2"
         case "canyon": return "arrow.down.to.line.compact"
         case "crater": return "circle.circle"
-        case "craterfield": return "circle.grid.2x2"
         case "dunesea": return "water.waves"
         case "mountainside": return "triangle.lefthalf.filled"
-        case "plates": return "square.grid.3x3.fill"
         case "ridge": return "waveform.path.ecg"
         case "rugged": return "bolt.horizontal.circle"
         case "slump": return "arrow.down.right.circle"
@@ -228,10 +225,8 @@ enum NodeTypeCatalog {
         case "mountainrange": return "Connected mountain chain"
         case "canyon": return "Incised canyon network"
         case "crater": return "Single impact basin"
-        case "craterfield": return "Scattered impact basins"
         case "dunesea": return "Wind-shaped dune field"
         case "mountainside": return "Directional mountain slope"
-        case "plates": return "Tectonic plate relief"
         case "ridge": return "Linear ridge crest"
         case "rugged": return "Broken rocky terrain"
         case "slump": return "Downslope mass movement"

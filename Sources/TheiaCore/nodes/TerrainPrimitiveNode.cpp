@@ -41,13 +41,6 @@ constexpr P kCrater[] = {
     {"terraces",0.50,0,1,false}, {"surroundings",0.30,0,1,false},
     {"seed",1337,0,9999,true},
 };
-constexpr P kCraterField[] = {
-    {"scale",0.22,0.05,1.5,false}, {"height",0.75,0,1,false},
-    {"density",18,1,64,true}, {"sizeVariation",0.60,0,1,false},
-    {"rimHeight",0.20,0,1,false}, {"age",0.35,0,1,false},
-    {"irregularity",0.18,0,1,false}, {"surroundings",0.25,0,1,false},
-    {"seed",1337,0,9999,true},
-};
 constexpr P kDuneSea[] = {
     {"scale",0.18,0.05,1.5,false}, {"height",0.42,0,1,false},
     {"direction",0,0,360,false}, {"asymmetry",0.65,0,1,false},
@@ -78,12 +71,6 @@ constexpr P kMountainSide[] = {
     {"peak",0.50,0,1,false}, {"detail",0.35,0,1,false},
     {"warp",0.15,0,1,false}, {"x",0,-1,1,false},
     {"y",0,-1,1,false}, {"seed",1337,0,9999,true},
-};
-constexpr P kPlates[] = {
-    {"scale",0.35,0.05,1.5,false}, {"height",0.70,0,1,false},
-    {"flatness",0.75,0,1,false}, {"boundaryUplift",0.35,0,1,false},
-    {"tilt",0.20,0,1,false}, {"warp",0.10,0,1,false},
-    {"seed",1337,0,9999,true},
 };
 constexpr P kRidge[] = {
     {"scale",0.75,0.05,1.5,false}, {"height",0.85,0,1,false},
@@ -130,12 +117,10 @@ constexpr TerrainPrimitiveDescriptor kDescriptors[] = {
     descriptor("rollinghills", TerrainPrimitiveFamily::massLine, 0, kRollingHills),
     descriptor("canyon", TerrainPrimitiveFamily::massLine, 1, kCanyon),
     descriptor("crater", TerrainPrimitiveFamily::radialImpact, 9, kCrater),
-    descriptor("craterfield", TerrainPrimitiveFamily::repeatingField, 11, kCraterField),
     descriptor("dunesea", TerrainPrimitiveFamily::repeatingField, 12, kDuneSea),
     descriptor("mountain", TerrainPrimitiveFamily::massLine, 2, kMountain),
     descriptor("mountainrange", TerrainPrimitiveFamily::massLine, 3, kMountainRange),
     descriptor("mountainside", TerrainPrimitiveFamily::massLine, 4, kMountainSide),
-    descriptor("plates", TerrainPrimitiveFamily::repeatingField, 13, kPlates),
     descriptor("ridge", TerrainPrimitiveFamily::massLine, 5, kRidge),
     descriptor("rugged", TerrainPrimitiveFamily::massLine, 6, kRugged),
     descriptor("slump", TerrainPrimitiveFamily::massLine, 7, kSlump),

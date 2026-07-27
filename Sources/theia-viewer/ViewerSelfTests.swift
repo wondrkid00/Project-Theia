@@ -89,7 +89,6 @@ func runViewerSelfTests() -> Int32 {
            "custom node ids should become readable canvas titles")
     expect(NodeTypeCatalog.title(for: "rollinghills") == "Rolling Hills" &&
            NodeTypeCatalog.title(for: "mountainrange") == "Mountain Range" &&
-           NodeTypeCatalog.title(for: "craterfield") == "Crater Field" &&
            NodeTypeCatalog.title(for: "dunesea") == "Dune Sea" &&
            NodeTypeCatalog.title(for: "mountainside") == "Mountain Side",
            "terrain primitive ids should have readable catalog titles")
@@ -99,10 +98,8 @@ func runViewerSelfTests() -> Int32 {
         "mountainrange": "Connected mountain chain",
         "canyon": "Incised canyon network",
         "crater": "Single impact basin",
-        "craterfield": "Scattered impact basins",
         "dunesea": "Wind-shaped dune field",
         "mountainside": "Directional mountain slope",
-        "plates": "Tectonic plate relief",
         "ridge": "Linear ridge crest",
         "rugged": "Broken rocky terrain",
         "slump": "Downslope mass movement",
@@ -153,10 +150,8 @@ func runViewerSelfTests() -> Int32 {
         "mountainrange": ["scale", "height", "length", "width", "direction"],
         "canyon": ["scale", "height", "depth", "width"],
         "crater": ["scale", "height", "depth", "rimHeight"],
-        "craterfield": ["scale", "height", "density", "sizeVariation"],
         "dunesea": ["scale", "height", "direction", "asymmetry"],
         "mountainside": ["scale", "height", "slope", "direction"],
-        "plates": ["scale", "height", "flatness", "boundaryUplift"],
         "ridge": ["scale", "height", "length", "width", "direction"],
         "rugged": ["scale", "height", "bulk"],
         "slump": ["scale", "height", "collapse", "direction"],
@@ -202,7 +197,6 @@ func runViewerSelfTests() -> Int32 {
         expect(terrainConfig("mountain", "x", 0).range == -1...1,
                "terrain placement should cover normalized coordinates")
         expect(terrainConfig("canyon", "branches", 12).range == 1...32 &&
-               terrainConfig("craterfield", "density", 18).range == 1...64 &&
                terrainConfig("mountainrange", "peaks", 5).range == 1...12 &&
                terrainConfig("slump", "lobes", 4).range == 1...8 &&
                terrainConfig("uplift", "folds", 5).range == 1...12,

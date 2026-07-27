@@ -784,6 +784,9 @@ morphometric parameters and the simple-to-complex transition diameter.
 
 ### Crater field — size-frequency distribution and superposition
 
+**Retired.** The node was removed after review; the notes below are kept because
+the same reasoning applies to any repeated-feature primitive.
+
 Impact populations follow a steep power law: many small craters, very few large.
 Sampling radius uniformly gave a field of near-identical stamps, which is the
 clearest signature of generation rather than accumulation. Radius is now drawn

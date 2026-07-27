@@ -521,80 +521,6 @@ static inline float radialImpactValue(float2 p, constant PrimitiveParams& P) {
 }
 
 static inline float repeatingFieldValue(float2 p, constant PrimitiveParams& P) {
-    if (P.kind == 11u) { // craterfield
-        float scale=P.v[0], height=P.v[1], density=P.v[2];
-        float variation=P.v[3], rimHeight=P.v[4], age=P.v[5], irregular=P.v[6];
-        float surroundings=P.v[7];
-        float grid=ceil(sqrt(max(density,1.0f)));
-        float2 cellP=(p+0.5f)*grid;
-        int2 base=int2(floor(cellP));
-        float maximumRadius=0.15f*scale*(1.0f+variation);
-        int lookupRadius=clamp(int(ceil(2.0f*maximumRadius*grid))+1,1,10);
-        float z=0.0f;
-        for (int oy=-10;oy<=10;++oy) {
-            if (abs(oy)>lookupRadius) continue;
-            for (int ox=-10;ox<=10;++ox) {
-                if (abs(ox)>lookupRadius) continue;
-                int2 c=base+int2(ox,oy);
-                float occupancy=density/(grid*grid);
-                if (randCell(c,P.seed^0x4F1BBCDCu)>=occupancy) continue;
-                float2 center=featurePoint(c,P.seed)/grid-0.5f;
-                float rv=randCell(c,P.seed^0xB5297A4Du);
-                // Crater size-frequency follows a steep power law: many small,
-                // very few large. Sampling radius uniformly gave a field of
-                // near-identical stamps, which is the giveaway that it was
-                // generated rather than accumulated over time.
-                float sizeExponent=mix(1.0f,3.2f,sat(variation));
-                float radius=max(0.15f*scale*
-                                 mix(0.12f,1.0f,pow(max(rv,1.0e-4f),
-                                                    sizeExponent)),
-                                 1.0e-4f);
-                // Craters accumulate over time, so each carries its own degree
-                // of degradation; one global age makes them all contemporaries.
-                float ageJitter=randCell(c,P.seed^0x68BC21EBu);
-                float localAge=sat(age*mix(0.35f,1.65f,ageJitter));
-                float2 d=p-center;
-                float rho=length(d)/radius;
-                float2 dir=d/max(length(d),1.0e-5f);
-                // Cartesian, not polar: noise on atan2 spokes at the centre.
-                float shape=1.0f+0.12f*irregular*
-                    gradientNoise(dir*3.0f+float2(float(c.x),float(c.y)),
-                                  P.seed^0x9E3779B9u);
-                rho/=max(shape,0.75f);
-                // Depth scales with DIAMETER (d/D ~ 0.2, Pike 1977). Giving
-                // every crater the same absolute depth made the small ones --
-                // now numerous, because the size distribution is a power law --
-                // into needle-thin pits punched far below the plain.
-                float sizeFraction=sat(radius/max(0.15f*scale,1.0e-5f));
-                float pixelSpan=radius*float(min(P.width,P.height));
-                // Depth is PROPORTIONAL to diameter, and a crater narrower than
-                // a couple of samples cannot be represented at all -- drawn
-                // anyway it aliases into a one-pixel needle rather than a bowl,
-                // so it fades out instead.
-                float resolved=smoothstep(1.5f,4.0f,pixelSpan);
-                float bowlDepth=sizeFraction*resolved;
-                float cavity=rho<1.0f
-                    ? -bowlDepth*mix(1.0f,0.35f,localAge)*(1.0f-rho*rho)
-                    : 0.0f;
-                float pixelRadius=
-                    radius*float(min(P.width,P.height));
-                float pixelRim=2.25f/max(pixelRadius,1.0f);
-                float normalizedRimWidth=max(0.16f,pixelRim);
-                float rimResolution=smoothstep(2.0f,5.0f,pixelRadius);
-                float rim=bowlDepth*mix(1.0f,0.15f,localAge)*rimHeight*
-                          rimResolution*
-                          exp(-pow((rho-1.0f)/normalizedRimWidth,2.0f));
-                float ejecta=bowlDepth*mix(0.35f,0.0f,localAge)*rimHeight*
-                             pow(max(rho,1.0f),-3.0f)*
-                             (1.0f-smoothstep(1.0f,2.0f,rho));
-                z += cavity+rim+ejecta;
-            }
-        }
-        // Regolith between the craters. A cratered plain with a perfectly
-        // smooth surface between impacts reads as a stamped texture.
-        return sat(0.5f+surroundingRelief(p,surroundings,scale,P.seed)
-                   +height*z);
-    }
     if (P.kind == 12u) { // dunesea
         float scale=P.v[0], height=P.v[1], angle=toRadians(P.v[2]);
         float asym=P.v[3], sharp=P.v[4], chaos=P.v[5], warp=P.v[6];
@@ -656,21 +582,6 @@ static inline float repeatingFieldValue(float2 p, constant PrimitiveParams& P) {
         float continuity=mix(1.0f,0.12f+0.88f*segment,
                              smoothstep(0.0f,0.35f,chaos));
         return sat(height*dune*envelope*continuity);
-    }
-    if (P.kind == 13u) { // plates
-        float scale=P.v[0], height=P.v[1], flat=P.v[2], uplift=P.v[3];
-        float tilt=P.v[4];
-        float2 w=warpPoint(p,scale,P.v[5],P.seed);
-        float2 cellP=(w+0.5f)/scale;
-        WorleyResult wr=worley(cellP,P.seed);
-        float edgeWidth=mix(0.02f,0.35f,1.0f-flat);
-        float boundary=1.0f-smoothstep(0.0f,edgeWidth,wr.f2-wr.f1);
-        float a=6.28318530718f*unit24(wr.id);
-        float2 dir=float2(cos(a),sin(a));
-        float2 ownerOffset=(cellP-wr.owner)*scale;
-        float cellTilt=tilt*dot(ownerOffset,dir);
-        float z=0.15f+0.55f*wr.value+cellTilt+uplift*boundary;
-        return sat(height*z);
     }
     return 0.0f;
 }
