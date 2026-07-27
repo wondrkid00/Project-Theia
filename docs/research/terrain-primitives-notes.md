@@ -793,6 +793,14 @@ Craters also accumulate over time, so each carries its own degradation state;
 one global `age` made every crater a contemporary of the others. Age is now
 jittered per crater, shallowing the cavity and muting rim and ejecta.
 
+**Depth is proportional to diameter, and sub-pixel craters must not be drawn.**
+A power law makes small craters numerous, so giving every crater the same
+absolute depth turned them into needle-thin pits punched far below the plain --
+plainly visible in a 3D view as spikes hanging under the terrain. Depth now
+scales with radius, and a crater narrower than a few samples fades out: drawn
+anyway it aliases into a one-pixel spike rather than a bowl, which is a sampling
+artifact and not a landform.
+
 ### Dune sea — seif morphology
 
 Seif dunes **meander**: crests are sinuous, with a meander wavelength roughly an
@@ -801,10 +809,16 @@ signature of a periodic function, not of wind.
 
 Real fields are also measured by **defect density** — crests terminate and
 neighbours take over, producing Y-junctions. `crestMeander` bends the crest
-line; `defects` opens the terminations; and each crest draws its own amplitude
-so neighbours differ. The defect threshold must be centred on the noise range:
-an early version offset it by `(1 - defects)`, which put the threshold outside
-the range the noise could reach, so no crest ever terminated.
+line and `defects` opens the terminations. The defect threshold must be centred
+on the noise range: an early version offset it by `(1 - defects)`, which put the
+threshold outside the range the noise could reach, so no crest ever terminated.
+
+**Per-dune variation must come from a smooth spatial field, not a per-crest
+hash.** Hashing `floor(phase)` gives each crest a constant, so the value jumps
+at every phase wrap and the field renders as rectangular tiles with hard seams --
+a worse artifact than the uniformity it was meant to cure. Sampling noise in
+(along-crest, across-crest) coordinates keeps neighbouring dunes different
+without introducing a discontinuity anywhere.
 
 ### Mountain range — fold-thrust belt geometry
 

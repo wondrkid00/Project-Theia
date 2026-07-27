@@ -2268,6 +2268,47 @@ h.test("Slump direction and lobe count control its structure") {
              "slump lobe count should affect deposits")
 }
 
+h.test("Crater field depth scales with diameter and dunes do not tile") {
+    let size = 192
+    // A power-law size distribution makes small craters numerous, so giving
+    // every crater the same absolute depth turned them into needle-thin pits
+    // punched far below the plain. Depth must scale with diameter (d/D ~ 0.2).
+    let field = evalGraphHeightsJSON(
+        primitiveJSON("craterfield", params: "{ \"seed\": 404 }", size: size),
+        sink: "terrain", size: UInt32(size))
+    h.expect(field.count == size * size, "crater field must evaluate")
+    var needles = 0
+    for y in 1..<(size - 1) {
+        for x in 1..<(size - 1) {
+            let i = y * size + x
+            let lowestNeighbour = min(min(field[i - 1], field[i + 1]),
+                                      min(field[i - size], field[i + size]))
+            if lowestNeighbour - field[i] > 0.10 { needles += 1 }
+        }
+    }
+    h.expect(needles == 0, "crater field punched \(needles) needle pits")
+
+    // Hashing per crest index gave each dune a constant, so the value jumped at
+    // every phase wrap and the field rendered as rectangular tiles. Detect a
+    // seam as a column whose neighbours differ far more than the field's own
+    // typical horizontal step.
+    let dunes = evalGraphHeightsJSON(
+        primitiveJSON("dunesea", params: "{ \"seed\": 404 }", size: size),
+        sink: "terrain", size: UInt32(size))
+    h.expect(dunes.count == size * size, "dune sea must evaluate")
+    var steps: [Float] = []
+    for y in 0..<size {
+        for x in 1..<size {
+            steps.append(abs(dunes[y * size + x] - dunes[y * size + x - 1]))
+        }
+    }
+    steps.sort()
+    let median = steps[steps.count / 2]
+    let worst = steps[steps.count - 1]
+    h.expect(worst < max(median, 1e-5) * 90,
+             "dune sea has a hard seam: peak step \(worst) vs median \(median)")
+}
+
 h.test("Landform primitives sit in terrain rather than on a flat plane") {
     // mountain, mountainrange and crater all clipped their profile to exactly
     // zero outside the feature radius, so the surroundings measured 0.00000

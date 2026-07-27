@@ -561,17 +561,30 @@ static inline float repeatingFieldValue(float2 p, constant PrimitiveParams& P) {
                     gradientNoise(dir*3.0f+float2(float(c.x),float(c.y)),
                                   P.seed^0x9E3779B9u);
                 rho/=max(shape,0.75f);
-                // Paraboloid bowl (Pike 1977), shallowing as the crater ages.
+                // Depth scales with DIAMETER (d/D ~ 0.2, Pike 1977). Giving
+                // every crater the same absolute depth made the small ones --
+                // now numerous, because the size distribution is a power law --
+                // into needle-thin pits punched far below the plain.
+                float sizeFraction=sat(radius/max(0.15f*scale,1.0e-5f));
+                float pixelSpan=radius*float(min(P.width,P.height));
+                // Depth is PROPORTIONAL to diameter, and a crater narrower than
+                // a couple of samples cannot be represented at all -- drawn
+                // anyway it aliases into a one-pixel needle rather than a bowl,
+                // so it fades out instead.
+                float resolved=smoothstep(1.5f,4.0f,pixelSpan);
+                float bowlDepth=sizeFraction*resolved;
                 float cavity=rho<1.0f
-                    ? -mix(1.0f,0.35f,localAge)*(1.0f-rho*rho) : 0.0f;
+                    ? -bowlDepth*mix(1.0f,0.35f,localAge)*(1.0f-rho*rho)
+                    : 0.0f;
                 float pixelRadius=
                     radius*float(min(P.width,P.height));
                 float pixelRim=2.25f/max(pixelRadius,1.0f);
                 float normalizedRimWidth=max(0.16f,pixelRim);
                 float rimResolution=smoothstep(2.0f,5.0f,pixelRadius);
-                float rim=mix(1.0f,0.15f,localAge)*rimHeight*rimResolution*
+                float rim=bowlDepth*mix(1.0f,0.15f,localAge)*rimHeight*
+                          rimResolution*
                           exp(-pow((rho-1.0f)/normalizedRimWidth,2.0f));
-                float ejecta=mix(0.35f,0.0f,localAge)*rimHeight*
+                float ejecta=bowlDepth*mix(0.35f,0.0f,localAge)*rimHeight*
                              pow(max(rho,1.0f),-3.0f)*
                              (1.0f-smoothstep(1.0f,2.0f,rho));
                 z += cavity+rim+ejecta;
@@ -610,19 +623,23 @@ static inline float repeatingFieldValue(float2 p, constant PrimitiveParams& P) {
             fbm(float2(q.x*0.55f,q.y*0.08f),0.55f/scale,
                 4u,2.0f,0.5f,P.seed^0x1B56C4E9u);
         float rawPhase=(along/scale)*localFrequency+meander+phaseChaos+sinuous;
-        float crestIndex=floor(rawPhase);
         float phase=fract(rawPhase);
-        // Per-crest identity. Neighbouring dunes in a real sand sea differ in
-        // height and sharpness; identical crests read as a tiled texture.
-        float crestId=randCell(int2(int(crestIndex),0),P.seed^0x2545F491u);
-        float crestAmplitude=mix(0.30f,1.0f,crestId);
+        // Amplitude and defects vary as SMOOTH SPATIAL FIELDS. Hashing on
+        // floor(phase) gave each crest a constant, so the value jumped at every
+        // phase wrap and the field rendered as rectangular tiles with hard
+        // seams -- worse than the uniformity it was meant to cure. Sampling
+        // noise in (along-crest, across-crest) keeps neighbouring dunes
+        // different without introducing a discontinuity anywhere.
+        float amplitudeField=fbm(float2(q.x*0.35f,q.y*0.85f),0.55f/scale,
+                                 3u,2.0f,0.5f,P.seed^0x2545F491u);
+        float crestAmplitude=mix(0.40f,1.0f,sat(0.5f+0.5f*amplitudeField));
         // Along-crest defects: a crest dies out and its neighbour takes over,
         // which is what produces the Y-junctions seen in real dune fields.
-        float defectField=fbm(float2(q.x*0.75f,crestIndex*4.1f),
-                              0.85f/scale,3u,2.0f,0.5f,P.seed^0xA24BAED4u);
+        float defectField=fbm(float2(q.x*0.70f,q.y*1.50f),0.80f/scale,
+                              3u,2.0f,0.5f,P.seed^0xA24BAED4u);
         // Centred so the gaps actually open: offsetting by (1-defects) put the
         // threshold outside the noise range, and no crest ever terminated.
-        float alive=smoothstep(-0.30f,0.30f,defectField+(0.45f-defects));
+        float alive=smoothstep(-0.28f,0.28f,defectField+(0.45f-defects));
         float stoss=0.5f+0.45f*asym;
         float rise=smoothstep(0.0f,1.0f,phase/stoss);
         float fall=1.0f-smoothstep(0.0f,1.0f,(phase-stoss)/(1.0f-stoss));
