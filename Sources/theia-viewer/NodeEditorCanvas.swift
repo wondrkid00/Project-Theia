@@ -96,9 +96,22 @@ struct NodeTypeGroup: Identifiable {
 }
 
 enum NodeTypeCatalog {
+    static let terrainTypes = [
+        "rollinghills", "mountain", "mountainrange", "canyon",
+        "crater", "craterfield", "dunesea", "mountainside",
+        "plates", "ridge", "rugged", "slump", "uplift", "volcano",
+    ]
+    static let quickStartTypes = [
+        "rollinghills", "mountain", "mountainrange", "canyon",
+    ]
+
+    private static let hiddenTypes: Set<String> = ["ridged"]
+
     private static let groups: [NodeTypeGroup] = [
-        NodeTypeGroup(id: "source", title: "Source", systemImage: "sparkles",
-                      types: ["perlin", "ridged"]),
+        NodeTypeGroup(id: "terrain", title: "Terrain", systemImage: "mountain.2",
+                      types: terrainTypes),
+        NodeTypeGroup(id: "noise", title: "Noise", systemImage: "waveform.path.ecg",
+                      types: ["perlin"]),
         NodeTypeGroup(id: "shape", title: "Shape", systemImage: "slider.horizontal.3",
                       types: ["scalebias", "normalize", "terrace"]),
         NodeTypeGroup(id: "combine", title: "Combine", systemImage: "square.stack.3d.up",
@@ -122,7 +135,7 @@ enum NodeTypeCatalog {
     ]
 
     static func grouped(_ availableTypes: [String]) -> [NodeTypeGroup] {
-        let available = Set(availableTypes)
+        let available = Set(availableTypes.filter(isPresented))
         var used = Set<String>()
         var result: [NodeTypeGroup] = []
         for group in groups {
@@ -134,7 +147,9 @@ enum NodeTypeCatalog {
                                         systemImage: group.systemImage,
                                         types: types))
         }
-        let uncategorized = availableTypes.filter { !used.contains($0) }
+        let uncategorized = availableTypes.filter {
+            isPresented($0) && !used.contains($0)
+        }
         if !uncategorized.isEmpty {
             result.append(NodeTypeGroup(id: "other",
                                         title: "Other",
@@ -144,8 +159,33 @@ enum NodeTypeCatalog {
         return result
     }
 
+    static func filteredGroups(_ groups: [NodeTypeGroup],
+                               query rawQuery: String) -> [NodeTypeGroup] {
+        let query = rawQuery.trimmingCharacters(
+            in: .whitespacesAndNewlines).lowercased()
+        guard !query.isEmpty else { return groups }
+        return groups.compactMap { group in
+            let matchesGroup = group.title.lowercased().contains(query)
+            let types = group.types.filter { type in
+                matchesGroup ||
+                    type.lowercased().contains(query) ||
+                    title(for: type).lowercased().contains(query)
+            }
+            guard !types.isEmpty else { return nil }
+            return NodeTypeGroup(id: group.id,
+                                 title: group.title,
+                                 systemImage: group.systemImage,
+                                 types: types)
+        }
+    }
+
     static func title(for type: String) -> String {
         switch type {
+        case "rollinghills": return "Rolling Hills"
+        case "mountainrange": return "Mountain Range"
+        case "craterfield": return "Crater Field"
+        case "dunesea": return "Dune Sea"
+        case "mountainside": return "Mountain Side"
         case "scalebias": return "Scale Bias"
         case "dropleterosion": return "Droplet Erosion"
         case "erosionfilter": return "Erosion Filter"
@@ -159,8 +199,50 @@ enum NodeTypeCatalog {
     }
 
     static func icon(for type: String) -> String {
-        groups.first(where: { $0.types.contains(type) })?.systemImage
-            ?? "square.dashed"
+        switch type {
+        case "rollinghills": return "waveform.path"
+        case "mountain": return "mountain.2.fill"
+        case "mountainrange": return "mountain.2"
+        case "canyon": return "arrow.down.to.line.compact"
+        case "crater": return "circle.circle"
+        case "craterfield": return "circle.grid.2x2"
+        case "dunesea": return "water.waves"
+        case "mountainside": return "triangle.lefthalf.filled"
+        case "plates": return "square.grid.3x3.fill"
+        case "ridge": return "waveform.path.ecg"
+        case "rugged": return "bolt.horizontal.circle"
+        case "slump": return "arrow.down.right.circle"
+        case "uplift": return "arrow.up.circle"
+        case "volcano": return "triangle.fill"
+        case "perlin": return "waveform.path.ecg"
+        default:
+            return groups.first(where: { $0.types.contains(type) })?.systemImage
+                ?? "square.dashed"
+        }
+    }
+
+    static func subtitle(for type: String) -> String {
+        switch type {
+        case "rollinghills": return "Soft rolling landforms"
+        case "mountain": return "Single mountain mass"
+        case "mountainrange": return "Connected mountain chain"
+        case "canyon": return "Incised canyon network"
+        case "crater": return "Single impact basin"
+        case "craterfield": return "Scattered impact basins"
+        case "dunesea": return "Wind-shaped dune field"
+        case "mountainside": return "Directional mountain slope"
+        case "plates": return "Tectonic plate relief"
+        case "ridge": return "Linear ridge crest"
+        case "rugged": return "Broken rocky terrain"
+        case "slump": return "Downslope mass movement"
+        case "uplift": return "Broad tectonic rise"
+        case "volcano": return "Volcanic cone and crater"
+        default: return title(for: type)
+        }
+    }
+
+    static func isPresented(_ type: String) -> Bool {
+        !hiddenTypes.contains(type)
     }
 
     static func nodeTitle(id: String, type: String) -> String {
@@ -678,24 +760,12 @@ private struct EmptyGraphQuickAdd: View {
     private var available: Set<String> { Set(availableTypes) }
 
     private var starters: [QuickAddStarter] {
-        [
-            QuickAddStarter(kind: "perlin",
-                            title: "Perlin",
-                            systemImage: "waveform.path.ecg",
-                            requiredTypes: ["perlin"]),
-            QuickAddStarter(kind: "ridged",
-                            title: "Ridged",
-                            systemImage: "mountain.2",
-                            requiredTypes: ["ridged"]),
-            QuickAddStarter(kind: "terrace",
-                            title: "Terrace",
-                            systemImage: "stairs",
-                            requiredTypes: ["perlin", "terrace"]),
-            QuickAddStarter(kind: "river",
-                            title: "River",
-                            systemImage: "water.waves",
-                            requiredTypes: ["perlin", "river", "rivercarve"]),
-        ].filter { starter in
+        NodeTypeCatalog.quickStartTypes.map { type in
+            QuickAddStarter(kind: type,
+                            title: NodeTypeCatalog.title(for: type),
+                            systemImage: NodeTypeCatalog.icon(for: type),
+                            requiredTypes: [type])
+        }.filter { starter in
             starter.requiredTypes.allSatisfy { available.contains($0) }
         }
     }
@@ -796,8 +866,11 @@ private struct NodeSelectionWindow: View {
     private var visibleTargets: [GraphCompatibleNodeTarget] {
         let query = searchText.trimmingCharacters(
             in: .whitespacesAndNewlines).lowercased()
-        guard !query.isEmpty else { return targets }
-        return targets.filter { target in
+        let presented = targets.filter {
+            NodeTypeCatalog.isPresented($0.nodeType)
+        }
+        guard !query.isEmpty else { return presented }
+        return presented.filter { target in
             target.nodeType.lowercased().contains(query) ||
                 NodeTypeCatalog.title(for: target.nodeType)
                     .lowercased().contains(query) ||
@@ -814,23 +887,8 @@ private struct NodeSelectionWindow: View {
     }
 
     private var visibleGroups: [NodeTypeGroup] {
-        let query = searchText.trimmingCharacters(
-            in: .whitespacesAndNewlines).lowercased()
         let groups = NodeTypeCatalog.grouped(availableTypes)
-        guard !query.isEmpty else { return groups }
-        return groups.compactMap { group in
-            let matching = group.types.filter { type in
-                type.lowercased().contains(query) ||
-                    NodeTypeCatalog.title(for: type)
-                        .lowercased().contains(query) ||
-                    group.title.lowercased().contains(query)
-            }
-            guard !matching.isEmpty else { return nil }
-            return NodeTypeGroup(id: group.id,
-                                 title: group.title,
-                                 systemImage: group.systemImage,
-                                 types: matching)
-        }
+        return NodeTypeCatalog.filteredGroups(groups, query: searchText)
     }
 
     private var hasVisibleItems: Bool {
@@ -1165,9 +1223,8 @@ private struct AddNodePalette: View {
     }
 
     private var visibleGroups: [NodeTypeGroup] {
-        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         var sourceGroups = groups
-        if query.isEmpty {
+        if searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             let available = Set(groups.flatMap(\.types))
             let recent = recentTypes.filter { available.contains($0) }
             if !recent.isEmpty {
@@ -1177,20 +1234,8 @@ private struct AddNodePalette: View {
                                                   types: recent),
                                     at: 0)
             }
-            return sourceGroups
         }
-        return sourceGroups.compactMap { group in
-            let types = group.types.filter { type in
-                type.lowercased().contains(query) ||
-                    NodeTypeCatalog.title(for: type).lowercased().contains(query) ||
-                    group.title.lowercased().contains(query)
-            }
-            guard !types.isEmpty else { return nil }
-            return NodeTypeGroup(id: group.id,
-                                 title: group.title,
-                                 systemImage: group.systemImage,
-                                 types: types)
-        }
+        return NodeTypeCatalog.filteredGroups(sourceGroups, query: searchText)
     }
 
     var body: some View {
@@ -1211,31 +1256,33 @@ private struct AddNodePalette: View {
                     .stroke(Color.white.opacity(0.10), lineWidth: 1))
 
             HStack(spacing: 14) {
-                VStack(alignment: .leading, spacing: 5) {
-                    ForEach(visibleGroups) { group in
-                        Button {
-                            withAnimation(.easeOut(duration: 0.14)) {
-                                selectedGroupId = group.id
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 5) {
+                        ForEach(visibleGroups) { group in
+                            Button {
+                                withAnimation(.easeOut(duration: 0.14)) {
+                                    selectedGroupId = group.id
+                                }
+                            } label: {
+                                HStack(spacing: 9) {
+                                    Image(systemName: group.systemImage)
+                                        .frame(width: 17)
+                                    Text(group.title)
+                                        .fontWeight(.semibold)
+                                    Spacer(minLength: 10)
+                                }
+                                .frame(width: 154, alignment: .leading)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 7)
+                                .contentShape(Rectangle())
+                                .foregroundStyle(selectedGroup?.id == group.id ? .white : .primary)
+                                .background(selectedGroup?.id == group.id ? Color.accentColor : Color.clear,
+                                            in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+                                .scaleEffect(selectedGroup?.id == group.id ? 1.0 : 0.985)
+                                .animation(.easeOut(duration: 0.14), value: selectedGroup?.id)
                             }
-                        } label: {
-                            HStack(spacing: 9) {
-                                Image(systemName: group.systemImage)
-                                    .frame(width: 17)
-                                Text(group.title)
-                                    .fontWeight(.semibold)
-                                Spacer(minLength: 10)
-                            }
-                            .frame(width: 154, alignment: .leading)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 7)
-                            .contentShape(Rectangle())
-                            .foregroundStyle(selectedGroup?.id == group.id ? .white : .primary)
-                            .background(selectedGroup?.id == group.id ? Color.accentColor : Color.clear,
-                                        in: RoundedRectangle(cornerRadius: 7, style: .continuous))
-                            .scaleEffect(selectedGroup?.id == group.id ? 1.0 : 0.985)
-                            .animation(.easeOut(duration: 0.14), value: selectedGroup?.id)
+                            .buttonStyle(.plain)
                         }
-                        .buttonStyle(.plain)
                     }
                 }
                 .frame(width: 174, height: 340, alignment: .topLeading)
@@ -1243,17 +1290,22 @@ private struct AddNodePalette: View {
                 Divider()
                     .frame(height: 340)
 
-                VStack(alignment: .leading, spacing: 5) {
-                    if let selectedGroup {
-                        ForEach(selectedGroup.types, id: \.self) { type in
-                            Button {
-                                onSelect(type)
-                            } label: {
-                                HStack {
-                                    Text(NodeTypeCatalog.title(for: type))
-                                        .fontWeight(.semibold)
-                                    Spacer(minLength: 10)
-                                }
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 5) {
+                        if let selectedGroup {
+                            ForEach(selectedGroup.types, id: \.self) { type in
+                                Button {
+                                    onSelect(type)
+                                } label: {
+                                    HStack(spacing: 9) {
+                                        Image(systemName: NodeTypeCatalog.icon(for: type))
+                                            .font(.system(size: 11, weight: .semibold))
+                                            .foregroundStyle(.secondary)
+                                            .frame(width: 16)
+                                        Text(NodeTypeCatalog.title(for: type))
+                                            .fontWeight(.semibold)
+                                        Spacer(minLength: 10)
+                                    }
                                     .frame(width: 168, alignment: .leading)
                                     .padding(.horizontal, 10)
                                     .padding(.vertical, 7)
@@ -1264,21 +1316,22 @@ private struct AddNodePalette: View {
                                                 in: RoundedRectangle(cornerRadius: 7, style: .continuous))
                                     .scaleEffect(hoveredType == type ? 1.015 : 1.0)
                                     .animation(.easeOut(duration: 0.10), value: hoveredType)
-                            }
-                            .buttonStyle(.plain)
-                            .onHover { hovering in
-                                withAnimation(.easeOut(duration: 0.10)) {
-                                    hoveredType = hovering ? type : nil
+                                }
+                                .buttonStyle(.plain)
+                                .help(NodeTypeCatalog.subtitle(for: type))
+                                .onHover { hovering in
+                                    withAnimation(.easeOut(duration: 0.10)) {
+                                        hoveredType = hovering ? type : nil
+                                    }
                                 }
                             }
+                        } else {
+                            Text("No matches")
+                                .font(.callout.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                                .frame(width: 168, alignment: .leading)
+                                .padding(.top, 7)
                         }
-                        Spacer(minLength: 0)
-                    } else {
-                        Text("No matches")
-                            .font(.callout.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                            .frame(width: 168, alignment: .leading)
-                            .padding(.top, 7)
                     }
                 }
                 .frame(width: 188, height: 340, alignment: .topLeading)

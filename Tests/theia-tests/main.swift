@@ -1645,7 +1645,7 @@ func p4JSON(type: String, params: String = "{}", inputCount: Int = 1) -> String 
     } else if inputCount == 2 {
         nodes = """
         { "id": "a", "type": "perlin", "params": { "seed": 11, "frequency": 5.0 } },
-        { "id": "b", "type": "ridged", "params": { "seed": 21, "frequency": 7.0 } },
+        { "id": "b", "type": "rugged", "params": { "seed": 21 } },
         { "id": "n", "type": "\(type)", "params": \(params) }
         """
         connections = """
@@ -1663,23 +1663,666 @@ func p4JSON(type: String, params: String = "{}", inputCount: Int = 1) -> String 
     """
 }
 
+let terrainPrimitiveDefaults: [(type: String, params: [(String, Double)])] = [
+    ("rollinghills", [
+        ("scale", 0.65), ("height", 0.55), ("softness", 0.70),
+        ("undulation", 0.40), ("warp", 0.15), ("seed", 1337)
+    ]),
+    ("canyon", [
+        ("scale", 0.75), ("height", 0.78), ("depth", 0.55), ("width", 0.10),
+        ("branches", 12), ("wallSharpness", 0.65), ("roughness", 0.25),
+        ("seed", 1337)
+    ]),
+    ("crater", [
+        ("scale", 0.45), ("height", 0.80), ("depth", 0.55),
+        ("rimHeight", 0.22), ("rimWidth", 0.18), ("irregularity", 0.15),
+        ("ejecta", 0.20), ("x", 0), ("y", 0), ("seed", 1337)
+    ]),
+    ("craterfield", [
+        ("scale", 0.22), ("height", 0.75), ("density", 18),
+        ("sizeVariation", 0.60), ("rimHeight", 0.20), ("age", 0.35),
+        ("irregularity", 0.18), ("seed", 1337)
+    ]),
+    ("dunesea", [
+        ("scale", 0.18), ("height", 0.42), ("direction", 0),
+        ("asymmetry", 0.65), ("sharpness", 0.55), ("chaos", 0.25),
+        ("warp", 0.15), ("seed", 1337)
+    ]),
+    ("mountain", [
+        ("scale", 0.65), ("height", 0.90), ("bulk", 0.58),
+        ("roughness", 0.38), ("warp", 0.20), ("x", 0), ("y", 0),
+        ("seed", 1337)
+    ]),
+    ("mountainrange", [
+        ("scale", 0.70), ("height", 0.90), ("length", 1.25),
+        ("width", 0.24), ("direction", 25), ("peaks", 5),
+        ("roughness", 0.40), ("warp", 0.25), ("x", 0), ("y", 0),
+        ("seed", 1337)
+    ]),
+    ("mountainside", [
+        ("scale", 0.90), ("height", 0.85), ("slope", 0.65),
+        ("direction", 25), ("peak", 0.50), ("detail", 0.35),
+        ("warp", 0.15), ("x", 0), ("y", 0), ("seed", 1337)
+    ]),
+    ("plates", [
+        ("scale", 0.35), ("height", 0.70), ("flatness", 0.75),
+        ("boundaryUplift", 0.35), ("tilt", 0.20), ("warp", 0.10),
+        ("seed", 1337)
+    ]),
+    ("ridge", [
+        ("scale", 0.75), ("height", 0.85), ("length", 1.30),
+        ("width", 0.12), ("direction", 20), ("definition", 0.70),
+        ("fractures", 0.35), ("warp", 0.25), ("x", 0), ("y", 0),
+        ("seed", 1337)
+    ]),
+    ("rugged", [
+        ("scale", 0.55), ("height", 0.85), ("bulk", 0.60),
+        ("roughness", 0.70), ("fractures", 0.45), ("warp", 0.25),
+        ("seed", 1337)
+    ]),
+    ("slump", [
+        ("scale", 0.65), ("height", 0.65), ("collapse", 0.45),
+        ("direction", 20), ("softness", 0.55), ("lobes", 4),
+        ("warp", 0.15), ("seed", 1337)
+    ]),
+    ("uplift", [
+        ("scale", 0.70), ("height", 0.85), ("direction", 20), ("folds", 5),
+        ("foldWidth", 0.12), ("jitter", 0.25), ("roughness", 0.30),
+        ("seed", 1337)
+    ]),
+    ("volcano", [
+        ("scale", 0.55), ("height", 0.90), ("mouth", 0.22),
+        ("calderaDepth", 0.45), ("bulk", 0.60), ("radialErosion", 0.35),
+        ("roughness", 0.30), ("x", 0), ("y", 0), ("seed", 1337)
+    ])
+]
+
+func primitiveJSON(_ type: String, params: String = "{}",
+                   size: Int = 64) -> String {
+    """
+    {
+      "resolution": { "width": \(size), "height": \(size) },
+      "sink": "terrain",
+      "nodes": [
+        { "id": "terrain", "type": "\(type)", "params": \(params) }
+      ],
+      "connections": []
+    }
+    """
+}
+
+h.test("Terrain primitive library is registered with exact defaults") {
+    let registered = Set(readCxxString { theia.node_type_list($0, $1) }
+        .split(separator: ",")
+        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) })
+    h.expect(!registered.contains("ridged"), "retired ridged generator is still registered")
+
+    for primitive in terrainPrimitiveDefaults {
+        let type = primitive.type
+        h.expect(registered.contains(type), "\(type) is not registered")
+        h.expect(theia.graph_node_type_input_count(type) == 0,
+                 "\(type) must have zero inputs")
+        h.expect(theia.graph_node_type_output_count(type) == 1,
+                 "\(type) must have exactly one output")
+        let outputName = readCxxString {
+            theia.graph_node_type_output_name(type, 0, $0, $1)
+        }
+        let outputKind = readCxxString {
+            theia.graph_node_type_output_kind(type, 0, $0, $1)
+        }
+        h.expect(outputName == "terrain" && outputKind == "terrain" &&
+                 theia.graph_node_type_output_is_default(type, 0),
+                 "\(type) must expose a default terrain output")
+        h.expect(Int(theia.graph_default_param_count(type)) == primitive.params.count,
+                 "\(type) parameter count mismatch")
+
+        let actualNames = Set((0..<theia.graph_default_param_count(type)).map { index in
+            readCxxString {
+                theia.graph_default_param_name(type, index, $0, $1)
+            }
+        })
+        h.expect(actualNames == Set(primitive.params.map { $0.0 }),
+                 "\(type) parameter schema mismatch: \(actualNames)")
+        for (name, expected) in primitive.params {
+            let actual = theia.graph_default_param_value(type, name, .nan)
+            h.expect(actual == expected, "\(type).\(name) default \(actual), expected \(expected)")
+        }
+    }
+}
+
+h.test("Legacy ridged JSON is rejected while erosionfilter.ridge remains available") {
+    guard let g = theia.graph_create() else { h.expect(false, "create"); return }
+    defer { theia.graph_destroy(g) }
+    let legacy = """
+    {
+      "sink": "legacy",
+      "nodes": [
+        { "id": "legacy", "type": "ridged", "params": { "seed": 1337 } }
+      ],
+      "connections": []
+    }
+    """
+    h.expect(!theia.graph_load_json_text(g, legacy),
+             "retired ridged JSON should not load")
+    h.expect(graphError(g).lowercased().contains("unknown"),
+             "ridged rejection should identify an unknown node: \(graphError(g))")
+    h.expect(theia.graph_node_type_output_count("erosionfilter") == 2,
+             "erosionfilter outputs were removed with ridged")
+    let ridge = readCxxString {
+        theia.graph_node_type_output_name("erosionfilter", 1, $0, $1)
+    }
+    h.expect(ridge == "ridge", "erosionfilter.ridge must remain available")
+}
+
+h.test("Terrain primitive defaults are bounded, nondegenerate, deterministic, and seedable") {
+    for primitive in terrainPrimitiveDefaults {
+        let type = primitive.type
+        guard let g = theia.graph_create() else {
+            h.expect(false, "create \(type)")
+            continue
+        }
+        defer { theia.graph_destroy(g) }
+        h.expect(theia.graph_add_node(g, "terrain", type), "add \(type): \(graphError(g))")
+        var first = [Float](repeating: 0, count: 48 * 48)
+        let cold = first.withUnsafeMutableBufferPointer {
+            theia.graph_evaluate_heights(g, "terrain", 48, 48, $0.baseAddress, $0.count)
+        }
+        var repeated = [Float](repeating: 0, count: first.count)
+        let warm = repeated.withUnsafeMutableBufferPointer {
+            theia.graph_evaluate_heights(g, "terrain", 48, 48, $0.baseAddress, $0.count)
+        }
+        h.expect(cold.ok && warm.ok, "\(type) evaluation failed: \(graphError(g))")
+        h.expect(first == repeated, "\(type) is not bitwise deterministic")
+        h.expect(warm.evaluated == 0 && warm.reused == 1,
+                 "\(type) warm cache \(warm.evaluated)/\(warm.reused)")
+        h.expect(first.allSatisfy { $0.isFinite && $0 >= 0 && $0 <= 1 },
+                 "\(type) default output is not finite normalized terrain")
+        let lo = first.min() ?? 0
+        let hi = first.max() ?? 0
+        h.expect(hi - lo > 1e-4, "\(type) default output is degenerate: \(lo)...\(hi)")
+
+        h.expect(theia.graph_set_param(g, "terrain", "seed", 8123),
+                 "set \(type) seed")
+        var changed = [Float](repeating: 0, count: first.count)
+        let changedResult = changed.withUnsafeMutableBufferPointer {
+            theia.graph_evaluate_heights(g, "terrain", 48, 48, $0.baseAddress, $0.count)
+        }
+        h.expect(changedResult.ok, "\(type) changed-seed evaluation failed")
+        h.expect(changed != first, "\(type) seed does not affect its terrain")
+
+        let path = NSTemporaryDirectory() + "theia_primitive_\(type)_\(getpid()).json"
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        h.expect(theia.graph_save_json_file(g, path), "save \(type): \(graphError(g))")
+        guard let loaded = theia.graph_create() else {
+            h.expect(false, "create reloaded \(type)")
+            continue
+        }
+        defer { theia.graph_destroy(loaded) }
+        h.expect(theia.graph_load_json_file(loaded, path),
+                 "reload \(type): \(graphError(loaded))")
+        var roundTripped = [Float](repeating: 0, count: first.count)
+        let loadedResult = roundTripped.withUnsafeMutableBufferPointer {
+            theia.graph_evaluate_heights(
+                loaded, "terrain", 48, 48, $0.baseAddress, $0.count)
+        }
+        h.expect(loadedResult.ok && roundTripped == changed,
+                 "\(type) JSON round-trip changed terrain")
+    }
+}
+
+h.test("Terrain primitive parameter extremes are clamped to finite terrain") {
+    for primitive in terrainPrimitiveDefaults {
+        guard let g = theia.graph_create() else {
+            h.expect(false, "create \(primitive.type)")
+            continue
+        }
+        defer { theia.graph_destroy(g) }
+        h.expect(theia.graph_add_node(g, "terrain", primitive.type),
+                 "add \(primitive.type)")
+        for (name, _) in primitive.params {
+            h.expect(theia.graph_set_param(g, "terrain", name, 1e12),
+                     "set high \(primitive.type).\(name)")
+        }
+        let high = theia.graph_evaluate(g, "terrain", 32, 32, nil, nil)
+        h.expect(high.ok && high.minHeight.isFinite && high.maxHeight.isFinite &&
+                 high.minHeight >= 0 && high.maxHeight <= 1,
+                 "\(primitive.type) high extremes escaped bounds: \(graphError(g))")
+
+        for (name, _) in primitive.params {
+            h.expect(theia.graph_set_param(g, "terrain", name, -1e12),
+                     "set low \(primitive.type).\(name)")
+        }
+        let low = theia.graph_evaluate(g, "terrain", 32, 32, nil, nil)
+        h.expect(low.ok && low.minHeight.isFinite && low.maxHeight.isFinite &&
+                 low.minHeight >= 0 && low.maxHeight <= 1,
+                 "\(primitive.type) low extremes escaped bounds: \(graphError(g))")
+    }
+}
+
+h.test("Terrain primitives reject NaN and infinity rather than silently clamping") {
+    for primitive in terrainPrimitiveDefaults {
+        guard let g = theia.graph_create() else {
+            h.expect(false, "create \(primitive.type)")
+            continue
+        }
+        defer { theia.graph_destroy(g) }
+        h.expect(theia.graph_add_node(g, "terrain", primitive.type),
+                 "add \(primitive.type)")
+        for (name, defaultValue) in primitive.params {
+            for invalid in [Double.infinity, Double.nan] {
+                h.expect(theia.graph_set_param(g, "terrain", name, invalid),
+                         "set non-finite \(primitive.type).\(name)")
+                let result = theia.graph_evaluate(g, "terrain", 16, 16, nil, nil)
+                h.expect(!result.ok,
+                         "\(primitive.type).\(name) silently accepted \(invalid)")
+                h.expect(theia.graph_set_param(g, "terrain", name, defaultValue),
+                         "restore \(primitive.type).\(name)")
+            }
+        }
+    }
+}
+
+@MainActor
+func primitiveParamOutput(_ type: String, _ name: String,
+                          _ value: Double) -> [Float] {
+    evalGraphHeightsJSON(
+        primitiveJSON(type, params: "{ \"seed\": 4242, \"\(name)\": \(value) }",
+                      size: 32),
+        sink: "terrain", size: 32)
+}
+
+h.test("Terrain primitive parameter families clamp at their public limits") {
+    let clamps: [(String, String, Double, Double)] = [
+        ("rollinghills", "scale", 0.05, -10),
+        ("rollinghills", "scale", 1.5, 10),
+        ("canyon", "depth", 0, -10),
+        ("canyon", "depth", 1, 10),
+        ("dunesea", "direction", 0, -720),
+        ("dunesea", "direction", 360, 720),
+        ("crater", "x", -1, -10),
+        ("crater", "y", 1, 10),
+        ("ridge", "length", 0.25, -10),
+        ("ridge", "width", 0.6, 10),
+        ("canyon", "branches", 1, -10),
+        ("canyon", "branches", 32, 100),
+        ("craterfield", "density", 64, 100),
+        ("mountainrange", "peaks", 12, 100),
+        ("slump", "lobes", 8, 100),
+        ("uplift", "folds", 12, 100),
+        ("uplift", "foldWidth", 0.01, -10),
+        ("uplift", "foldWidth", 0.5, 10),
+        ("rugged", "seed", 0, -10),
+        ("rugged", "seed", 9999, 100000)
+    ]
+    for (type, name, limit, outside) in clamps {
+        let atLimit = primitiveParamOutput(type, name, limit)
+        let beyond = primitiveParamOutput(type, name, outside)
+        h.expect(atLimit == beyond,
+                 "\(type).\(name) did not clamp \(outside) to \(limit)")
+    }
+}
+
+h.test("Centered mountain, crater, and volcano preserve broad landform structure") {
+    let size = 65
+    let center = (size / 2) * size + size / 2
+    let corners = [0, size - 1, size * (size - 1), size * size - 1]
+
+    let mountain = evalGraphHeightsJSON(
+        primitiveJSON("mountain", size: size), sink: "terrain", size: UInt32(size))
+    let cornerMean = corners.map { mountain[$0] }.reduce(0, +) / Float(corners.count)
+    h.expect(mountain[center] > cornerMean + 0.10,
+             "mountain should rise above the map corners")
+
+    for type in ["crater", "volcano"] {
+        let terrain = evalGraphHeightsJSON(
+            primitiveJSON(type, size: size), sink: "terrain", size: UInt32(size))
+        let innerRadius = 4
+        let outerRadius = 18
+        var surrounding: [Float] = []
+        for y in 0..<size {
+            for x in 0..<size {
+                let dx = x - size / 2
+                let dy = y - size / 2
+                let d2 = dx * dx + dy * dy
+                if d2 >= innerRadius * innerRadius && d2 <= outerRadius * outerRadius {
+                    surrounding.append(terrain[y * size + x])
+                }
+            }
+        }
+        h.expect(terrain[center] < (surrounding.max() ?? terrain[center]) - 0.03,
+                 "\(type) should retain a centered depression below its rim/flanks")
+    }
+}
+
+func directionalVariation(_ values: [Float], width: Int) -> (Float, Float) {
+    let height = values.count / width
+    var dx: Float = 0
+    var dy: Float = 0
+    for y in 0..<height {
+        for x in 0..<width {
+            let i = y * width + x
+            if x + 1 < width { dx += abs(values[i + 1] - values[i]) }
+            if y + 1 < height { dy += abs(values[i + width] - values[i]) }
+        }
+    }
+    return (dx / Float(height * (width - 1)),
+            dy / Float((height - 1) * width))
+}
+
+h.test("Terrain primitives support 97x61 aspect ratios") {
+    let width = 97
+    let height = 61
+    for primitive in terrainPrimitiveDefaults {
+        guard let g = theia.graph_create() else {
+            h.expect(false, "create \(primitive.type)")
+            continue
+        }
+        defer { theia.graph_destroy(g) }
+        h.expect(theia.graph_add_node(g, "terrain", primitive.type),
+                 "add \(primitive.type)")
+        var values = [Float](repeating: 0, count: width * height)
+        let result = values.withUnsafeMutableBufferPointer {
+            theia.graph_evaluate_heights(
+                g, "terrain", UInt32(width), UInt32(height),
+                $0.baseAddress, $0.count)
+        }
+        h.expect(result.ok && Int(result.width) == width && Int(result.height) == height,
+                 "\(primitive.type) rejected 97x61: \(graphError(g))")
+        h.expect(values.allSatisfy { $0.isFinite && $0 >= 0 && $0 <= 1 },
+                 "\(primitive.type) 97x61 output is invalid")
+        h.expect((values.max() ?? 0) - (values.min() ?? 0) > 1e-4,
+                 "\(primitive.type) 97x61 output is degenerate")
+    }
+}
+
+func bilinearSample(_ values: [Float], width: Int, height: Int,
+                    u: Double, v: Double) -> Float {
+    guard width > 0, height > 0, values.count == width * height else {
+        return .nan
+    }
+    let px = min(1.0, max(0.0, u)) * Double(width - 1)
+    let py = min(1.0, max(0.0, v)) * Double(height - 1)
+    let x0 = Int(floor(px))
+    let y0 = Int(floor(py))
+    let x1 = min(x0 + 1, width - 1)
+    let y1 = min(y0 + 1, height - 1)
+    let tx = Float(px - Double(x0))
+    let ty = Float(py - Double(y0))
+    let top = values[y0 * width + x0] * (1 - tx) +
+              values[y0 * width + x1] * tx
+    let bottom = values[y1 * width + x0] * (1 - tx) +
+                 values[y1 * width + x1] * tx
+    return top * (1 - ty) + bottom * ty
+}
+
+@MainActor
+func evalPrimitiveHeights(_ type: String, params: String,
+                          width: Int, height: Int) -> [Float] {
+    guard let g = theia.graph_create() else {
+        h.expect(false, "create \(type)")
+        return []
+    }
+    defer { theia.graph_destroy(g) }
+    h.expect(theia.graph_load_json_text(
+        g, primitiveJSON(type, params: params, size: max(width, height))),
+        "load \(type): \(graphError(g))")
+    var values = [Float](repeating: 0, count: width * height)
+    let result = values.withUnsafeMutableBufferPointer {
+        theia.graph_evaluate_heights(
+            g, "terrain", UInt32(width), UInt32(height),
+            $0.baseAddress, $0.count)
+    }
+    h.expect(result.ok, "evaluate \(type) \(width)x\(height): \(graphError(g))")
+    return values
+}
+
+h.test("Smooth radial primitives use independent width and height coordinates") {
+    let width = 129
+    let height = 65
+    let cases = [
+        ("crater", "{ \"seed\": 1337, \"irregularity\": 0, \"ejecta\": 0 }"),
+        ("mountain", "{ \"seed\": 1337, \"roughness\": 0, \"warp\": 0 }"),
+        ("volcano", "{ \"seed\": 1337, \"roughness\": 0, \"radialErosion\": 0 }")
+    ]
+    // Fractions of the normalized center-to-edge world distance. Fractional
+    // positions exercise interpolation instead of relying on coincident pixels.
+    let radii = [0.12, 0.25, 0.38, 0.52, 0.68, 0.84]
+    for (type, params) in cases {
+        let values = evalPrimitiveHeights(
+            type, params: params, width: width, height: height)
+        for radius in radii {
+            let offset = 0.5 * radius
+            let horizontal = 0.5 * (
+                bilinearSample(values, width: width, height: height,
+                               u: 0.5 - offset, v: 0.5) +
+                bilinearSample(values, width: width, height: height,
+                               u: 0.5 + offset, v: 0.5))
+            let vertical = 0.5 * (
+                bilinearSample(values, width: width, height: height,
+                               u: 0.5, v: 0.5 - offset) +
+                bilinearSample(values, width: width, height: height,
+                               u: 0.5, v: 0.5 + offset))
+            h.expect(abs(horizontal - vertical) < 0.03,
+                     "\(type) aspect distortion at radius \(radius): " +
+                     "x \(horizontal), y \(vertical)")
+        }
+    }
+}
+
+h.test("Terrain primitives are consistent at 128, 256, and 512 samples") {
+    for primitive in terrainPrimitiveDefaults {
+        let coarse = evalGraphHeightsJSON(
+            primitiveJSON(primitive.type, size: 128),
+            sink: "terrain", size: 128)
+        for fineSize in [256, 512] {
+            let fine = evalGraphHeightsJSON(
+                primitiveJSON(primitive.type, size: fineSize),
+                sink: "terrain", size: UInt32(fineSize))
+            var sampled: [Float] = []
+            sampled.reserveCapacity(coarse.count)
+            for y in 0..<128 {
+                let v = Double(y) / 127.0
+                for x in 0..<128 {
+                    let u = Double(x) / 127.0
+                    sampled.append(bilinearSample(
+                        fine, width: fineSize, height: fineSize, u: u, v: v))
+                }
+            }
+            let difference = meanAbsoluteDifference(coarse, sampled)
+            h.expect(difference < 0.06,
+                     "\(primitive.type) changes at \(fineSize) samples, " +
+                     "mean diff \(difference)")
+        }
+    }
+}
+
+h.test("Directional terrain primitives rotate their anisotropy") {
+    for type in ["dunesea", "mountainrange", "mountainside", "ridge", "uplift"] {
+        let zero = evalGraphHeightsJSON(
+            primitiveJSON(type, params: "{ \"seed\": 404, \"direction\": 0 }",
+                          size: 96),
+            sink: "terrain", size: 96)
+        let ninety = evalGraphHeightsJSON(
+            primitiveJSON(type, params: "{ \"seed\": 404, \"direction\": 90 }",
+                          size: 96),
+            sink: "terrain", size: 96)
+        let a = directionalVariation(zero, width: 96)
+        let b = directionalVariation(ninety, width: 96)
+        let anisotropyA = a.0 - a.1
+        let anisotropyB = b.0 - b.1
+        h.expect(abs(anisotropyA) > 0.001 && abs(anisotropyB) > 0.001,
+                 "\(type) lacks anisotropy: \(a), \(b)")
+        h.expect(anisotropyA * anisotropyB < 0,
+                 "\(type) did not rotate its dominant variation: \(a), \(b)")
+        h.expect(meanAbsoluteDifference(zero, ninety) > 0.01,
+                 "\(type) direction did not change terrain")
+    }
+}
+
+h.test("Mountain range peak count changes its summit rhythm") {
+    let onePeak = evalGraphHeightsJSON(
+        primitiveJSON("mountainrange",
+                      params: "{ \"seed\": 404, \"peaks\": 1 }",
+                      size: 128),
+        sink: "terrain", size: 128)
+    let manyPeaks = evalGraphHeightsJSON(
+        primitiveJSON("mountainrange",
+                      params: "{ \"seed\": 404, \"peaks\": 12 }",
+                      size: 128),
+        sink: "terrain", size: 128)
+    h.expect(meanAbsoluteDifference(onePeak, manyPeaks) > 0.01,
+             "mountainrange.peaks should reshape the summit chain")
+}
+
+h.test("Rolling hills are lower-frequency than rugged terrain") {
+    let rolling = evalGraphHeightsJSON(
+        primitiveJSON("rollinghills", params: "{ \"seed\": 919 }", size: 128),
+        sink: "terrain", size: 128)
+    let rugged = evalGraphHeightsJSON(
+        primitiveJSON("rugged", params: "{ \"seed\": 919 }", size: 128),
+        sink: "terrain", size: 128)
+    let rollingDetail = curvaturePercentile(rolling, size: 128, percentile: 0.75)
+    let ruggedDetail = curvaturePercentile(rugged, size: 128, percentile: 0.75)
+    h.expect(ruggedDetail > rollingDetail * 1.35 + 0.0005,
+             "rugged detail \(ruggedDetail) did not exceed rolling \(rollingDetail)")
+}
+
+h.test("Plate terrain has broad interiors and sharper boundaries") {
+    let size = 128
+    let values = evalGraphHeightsJSON(
+        primitiveJSON("plates", params: "{ \"seed\": 773 }", size: size),
+        sink: "terrain", size: UInt32(size))
+    var gradients: [Float] = []
+    for y in 0..<(size - 1) {
+        for x in 0..<(size - 1) {
+            let i = y * size + x
+            gradients.append(max(abs(values[i + 1] - values[i]),
+                                 abs(values[i + size] - values[i])))
+        }
+    }
+    gradients.sort()
+    let interior = gradients[gradients.count / 2]
+    let boundary = gradients[Int(Double(gradients.count - 1) * 0.95)]
+    h.expect(boundary > interior * 1.8 + 0.001,
+             "plate boundary/interior separation is weak: \(interior), \(boundary)")
+}
+
+h.test("Plate tilt does not introduce regular cellular-grid seams") {
+    let size = 128
+    let values = evalGraphHeightsJSON(
+        primitiveJSON(
+            "plates",
+            params: """
+            {
+              "seed": 773, "scale": 0.25, "height": 1,
+              "flatness": 1, "boundaryUplift": 0,
+              "tilt": 1, "warp": 0
+            }
+            """,
+            size: size),
+        sink: "terrain", size: UInt32(size))
+    var allJumps: [Float] = []
+    var latticeJumps: [Float] = []
+    let latticeColumns = [1, 2, 3].map {
+        Int(round(Double($0) * 0.25 * Double(size - 1)))
+    }
+    for y in 0..<size {
+        for x in 1..<size {
+            let jump = abs(values[y * size + x] - values[y * size + x - 1])
+            allJumps.append(jump)
+            if latticeColumns.contains(x) {
+                latticeJumps.append(jump)
+            }
+        }
+    }
+    let globalMean = allJumps.reduce(0, +) / Float(allJumps.count)
+    let latticeMean = latticeJumps.reduce(0, +) / Float(latticeJumps.count)
+    h.expect(latticeMean < globalMean * 4 + 0.002,
+             "plate tilt reveals its cellular lookup grid: "
+             + "\(latticeMean) vs global \(globalMean)")
+}
+
+h.test("Slump direction and lobe count control its structure") {
+    @MainActor
+    func slump(_ direction: Int, _ lobes: Int) -> [Float] {
+        evalGraphHeightsJSON(
+            primitiveJSON(
+                "slump",
+                params: "{ \"seed\": 122, \"direction\": \(direction), \"lobes\": \(lobes) }",
+                size: 96),
+            sink: "terrain", size: 96)
+    }
+    let a = slump(0, 2)
+    let b = slump(90, 2)
+    let many = slump(0, 7)
+    let av = directionalVariation(a, width: 96)
+    let bv = directionalVariation(b, width: 96)
+    h.expect(abs(av.0 - av.1) > 0.001, "slump should be anisotropic")
+    h.expect((av.0 - av.1) * (bv.0 - bv.1) < 0,
+             "slump direction should rotate its structure")
+    h.expect(meanAbsoluteDifference(a, many) > 0.005,
+             "slump lobe count should affect deposits")
+}
+
+h.test("Canyon depth carves a substantially connected network") {
+    let size = 128
+    let base = evalGraphHeightsJSON(
+        primitiveJSON("canyon",
+                      params: "{ \"seed\": 515, \"depth\": 0 }", size: size),
+        sink: "terrain", size: UInt32(size))
+    let carved = evalGraphHeightsJSON(
+        primitiveJSON("canyon",
+                      params: "{ \"seed\": 515, \"depth\": 0.7 }", size: size),
+        sink: "terrain", size: UInt32(size))
+    let mask = zip(base, carved).map { $0 - $1 > 0.025 }
+    let carvedCount = mask.filter { $0 }.count
+    var visited = [Bool](repeating: false, count: mask.count)
+    var largest = 0
+    let neighbors = [(-1, -1), (0, -1), (1, -1), (-1, 0),
+                     (1, 0), (-1, 1), (0, 1), (1, 1)]
+    for index in mask.indices where mask[index] && !visited[index] {
+        var queue = [index]
+        visited[index] = true
+        var head = 0
+        while head < queue.count {
+            let current = queue[head]
+            head += 1
+            let x = current % size
+            let y = current / size
+            for (dx, dy) in neighbors {
+                let nx = x + dx
+                let ny = y + dy
+                if nx < 0 || ny < 0 || nx >= size || ny >= size { continue }
+                let next = ny * size + nx
+                if mask[next] && !visited[next] {
+                    visited[next] = true
+                    queue.append(next)
+                }
+            }
+        }
+        largest = max(largest, queue.count)
+    }
+    h.expect(carvedCount > size && meanAbsoluteDifference(base, carved) > 0.01,
+             "canyon depth should materially carve terrain")
+    h.expect(carvedCount > 0 && largest * 3 > carvedCount,
+             "canyon carving is fragmented: \(largest)/\(carvedCount)")
+}
+
 h.test("Foundation node types are registered and expose defaults") {
     let types = readCxxString { theia.node_type_list($0, $1) }
-    for type in ["ridged", "invert", "clamp", "remap", "blur", "warp", "blend"] {
+    for type in ["rugged", "invert", "clamp", "remap", "blur", "warp", "blend"] {
         h.expect(types.contains(type), "\(type) missing from node_type_list: \(types)")
         h.expect(theia.graph_default_param_count(type) > 0, "\(type) should expose defaults")
     }
-    h.expect(theia.graph_node_type_input_count("ridged") == 0, "ridged input count")
+    h.expect(theia.graph_node_type_input_count("rugged") == 0, "rugged input count")
     h.expect(theia.graph_node_type_input_count("blend") == 2, "blend input count")
     h.expect(theia.graph_default_param_value("blend", "opacity", -1) == 1.0,
              "blend opacity default")
-    h.expect(theia.graph_default_param_value("ridged", "heightScale", -1) == 1.0,
-             "ridged heightScale default")
 }
 
 h.test("Foundation nodes evaluate valid normalized terrain") {
     let cases: [(String, String, Int)] = [
-        ("ridged", "{ \"seed\": 44, \"heightScale\": 1.0 }", 0),
+        ("rugged", "{ \"seed\": 44 }", 0),
         ("invert", "{ \"amount\": 1.0 }", 1),
         ("clamp", "{ \"min\": 0.2, \"max\": 0.8 }", 1),
         ("remap", "{ \"inLow\": 0.2, \"inHigh\": 0.8, \"gamma\": 0.8 }", 1),
@@ -2575,9 +3218,7 @@ h.test("River node responds to combined upstream terrain") {
         { "id": "a", "type": "perlin", "params": {
           "seed": 91, "frequency": 4.5, "octaves": 6, "heightScale": 1.0
         } },
-        { "id": "b", "type": "ridged", "params": {
-          "seed": 229, "frequency": 7.0, "octaves": 5, "heightScale": 1.0
-        } },
+        { "id": "b", "type": "rugged", "params": { "seed": 229 } },
         { "id": "blend", "type": "blend", "params": {
           "mode": 1, "opacity": 0.42
         } },
@@ -2787,11 +3428,11 @@ h.test("CLI JSON commands are parseable and unknown options exit 2") {
     h.expect(actualTypes.allSatisfy { $0 == $0.trimmingCharacters(in: .whitespacesAndNewlines) },
              "node types must not contain surrounding whitespace")
     let combine = nodeList.first { ($0["type"] as? String) == "combine" }
-    let ridged = nodeList.first { ($0["type"] as? String) == "ridged" }
+    let rugged = nodeList.first { ($0["type"] as? String) == "rugged" }
     let erosionFilter = nodeList.first { ($0["type"] as? String) == "erosionfilter" }
     h.expect((combine?["inputCount"] as? Int) == 2, "combine input count missing from catalog")
-    h.expect(!((ridged?["defaultParams"] as? [[String: Any]]) ?? []).isEmpty,
-             "ridged defaults missing from catalog")
+    h.expect(!((rugged?["defaultParams"] as? [[String: Any]]) ?? []).isEmpty,
+             "rugged defaults missing from catalog")
     let erosionOutputs = erosionFilter?["outputs"] as? [[String: Any]] ?? []
     h.expect(erosionOutputs.count == 2 &&
              erosionOutputs.contains { ($0["name"] as? String) == "ridge" &&

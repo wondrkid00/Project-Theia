@@ -307,66 +307,6 @@ kernel void blur(device float*        out [[buffer(0)]],
 }
 )METAL";
 
-// Ridged multifractal references: Musgrave-style ridged multifractal as
-// popularized in mature libraries such as libnoise, using abs(noise) inverted
-// into ridges and accumulated as fBm.
-// Refs: https://libnoise.sourceforge.net/docs/classnoise_1_1module_1_1RidgedMulti.html
-//       https://thebookofshaders.com/13/
-inline constexpr const char* kRidgedFbm = R"METAL(
-#include <metal_stdlib>
-using namespace metal;
-
-static inline uint hash2(uint x, uint y, uint seed) {
-    uint h = seed + 0x9E3779B9u;
-    h ^= x * 0x85EBCA77u; h = (h ^ (h >> 15)) * 0xC2B2AE3Du;
-    h ^= y * 0x27D4EB2Fu; h = (h ^ (h >> 13)) * 0x165667B1u;
-    return h ^ (h >> 16);
-}
-
-static inline float2 grad2(int2 i, uint seed) {
-    uint h = hash2(uint(i.x), uint(i.y), seed);
-    float ang = float(h) * (6.28318530718 / 4294967296.0);
-    return float2(cos(ang), sin(ang));
-}
-
-static inline float perlin2(float2 p, uint seed) {
-    int2 ip = int2(floor(p));
-    float2 f = p - float2(ip);
-    float2 u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
-    float n00 = dot(grad2(ip + int2(0, 0), seed), f);
-    float n10 = dot(grad2(ip + int2(1, 0), seed), f - float2(1.0, 0.0));
-    float n01 = dot(grad2(ip + int2(0, 1), seed), f - float2(0.0, 1.0));
-    float n11 = dot(grad2(ip + int2(1, 1), seed), f - float2(1.0, 1.0));
-    return mix(mix(n00, n10, u.x), mix(n01, n11, u.x), u.y);
-}
-
-kernel void ridged_fbm(device float*      out [[buffer(0)]],
-                       constant uint4&    ui  [[buffer(1)]], // w,h,octaves,seed
-                       constant float*    pr  [[buffer(2)]],
-                       uint2              gid [[thread_position_in_grid]])
-{
-    uint W = ui.x, H = ui.y;
-    if (gid.x >= W || gid.y >= H) { return; }
-    uint octaves = ui.z;
-    uint seed = ui.w;
-    float freq = pr[0], lac = pr[1], gain = pr[2];
-    float sharp = max(0.001, pr[3]);
-    float heightScale = pr[4];
-    float2 uv = float2(gid) / float2(W, H);
-    float sum = 0.0, amp = 1.0, norm = 0.0;
-    for (uint o = 0; o < octaves; ++o) {
-        float n = perlin2(uv * freq, seed + o * 1013u) * 1.41421356;
-        float ridge = pow(clamp(1.0 - abs(n), 0.0, 1.0), sharp);
-        sum += ridge * amp;
-        norm += amp;
-        amp *= gain;
-        freq *= lac;
-    }
-    float h = (norm > 0.0) ? (sum / norm) : 0.0;
-    out[gid.y * W + gid.x] = clamp(h * heightScale, 0.0, 1.0);
-}
-)METAL";
-
 // Domain warping reference: mature procedural-noise workflows perturb the input
 // domain before sampling, e.g. Book of Shaders / Quilez-style warped noise.
 // Ref: https://thebookofshaders.com/13/

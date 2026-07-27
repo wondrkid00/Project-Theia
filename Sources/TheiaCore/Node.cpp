@@ -16,10 +16,10 @@
 #include "nodes/RemapNode.hpp"
 #include "nodes/RiverNode.hpp"
 #include "nodes/RiverCarveNode.hpp"
-#include "nodes/RidgedNode.hpp"
 #include "nodes/ScaleBiasNode.hpp"
 #include "nodes/SlopeMaskNode.hpp"
 #include "nodes/TerraceNode.hpp"
+#include "nodes/TerrainPrimitiveNode.hpp"
 #include "nodes/ThermalErosionNode.hpp"
 #include "nodes/WarpNode.hpp"
 
@@ -109,7 +109,7 @@ std::uint64_t Node::signature() const {
 
 std::unique_ptr<Node> createNode(const std::string& type, const std::string& id) {
     if (type == "perlin") return std::make_unique<PerlinNode>(id);
-    if (type == "ridged") return std::make_unique<RidgedNode>(id);
+    if (auto primitive = createTerrainPrimitiveNode(type, id)) return primitive;
     if (type == "scalebias") return std::make_unique<ScaleBiasNode>(id);
     if (type == "combine") return std::make_unique<CombineNode>(id);
     if (type == "blend") return std::make_unique<BlendNode>(id);
@@ -133,12 +133,17 @@ std::unique_ptr<Node> createNode(const std::string& type, const std::string& id)
 }
 
 std::vector<std::string> registeredNodeTypes() {
-    return {"perlin",         "ridged",    "scalebias", "combine",
-            "blend",          "invert",    "clamp",     "remap",
-            "blur",           "warp",      "hydraulic", "dropleterosion",
-            "erosionfilter",  "river",     "rivercarve", "export",
-            "thermal",        "terrace",   "normalize", "slopemask",
-            "fluvial"};
+    std::vector<std::string> types{"perlin"};
+    const auto primitives = terrainPrimitiveTypes();
+    types.insert(types.end(), primitives.begin(), primitives.end());
+    const char* remaining[] = {
+        "scalebias", "combine", "blend", "invert", "clamp", "remap",
+        "blur", "warp", "hydraulic", "dropleterosion", "erosionfilter",
+        "river", "rivercarve", "export", "thermal", "terrace", "normalize",
+        "slopemask", "fluvial",
+    };
+    types.insert(types.end(), std::begin(remaining), std::end(remaining));
+    return types;
 }
 
 } // namespace theia

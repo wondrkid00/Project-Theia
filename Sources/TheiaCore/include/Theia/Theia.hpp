@@ -88,7 +88,7 @@ std::size_t generate_error(const GenerateResult& r, char* out, std::size_t cap);
 // evaluate a sink at a resolution. Bool-returning calls store a message
 // retrievable via graph_last_error().
 //
-// Node types include generators ("perlin", "ridged"), unary filters/remaps
+// Node types include "perlin" and the terrain primitive generators, unary filters/remaps
 // ("scalebias", "invert", "clamp", "remap", "blur", "warp", "hydraulic",
 // "dropleterosion", "erosionfilter", "river", "rivercarve", "export",
 // "thermal", "terrace", "normalize", "slopemask"), and binary combiners

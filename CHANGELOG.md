@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Added a deterministic terrain primitive library covering rolling hills,
+  canyons, craters and crater fields, dune seas, mountains and ranges,
+  mountainsides, plates, ridges, rugged terrain, slumps, uplift, and volcanoes.
+  The former `ridged` generator has been removed; the independent
+  `erosionfilter.ridge` analysis output remains available.
 - Open the interactive viewer in windowed fullscreen by default, filling the
   display's visible work area while preserving the title bar and window controls.
 - Made typed multi-output authoring explicit in the viewer with named input

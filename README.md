@@ -16,8 +16,9 @@ interactive, and entirely on your Mac.
 
 Theia brings the essential terrain workflow into one focused tool:
 
-- **Build with nodes** — combine generators, filters, erosion, rivers, masks,
-  and transforms without locking your terrain into a single recipe.
+- **Build with nodes** — combine a broad library of terrain primitives,
+  filters, erosion, rivers, masks, and transforms without locking your terrain
+  into a single recipe.
 - **Shape with natural processes** — use hydraulic, thermal, droplet, and
   fluvial erosion to create landforms with believable structure.
 - **See every output** — preview terrain, masks, analysis data, normals, slopes,
@@ -54,7 +55,7 @@ swift run theia-cli run examples/showcase.json \
 
 The [`examples`](examples) directory includes ready-made graphs for:
 
-- foundational terrain generation
+- foundational terrain generation and ready-made landform primitives
 - hydraulic and thermal erosion
 - particle hydrology and river carving
 - fluvial landscape evolution
@@ -99,9 +100,10 @@ swift run theia-tests
 
 Current release: **0.12.0-alpha.1**
 
-Theia already supports a complete procedural terrain loop: node authoring,
-GPU-backed generation, erosion and river systems, typed multi-output fields,
-mask editing, 3D preview, and engine-ready export.
+Theia already supports a complete procedural terrain loop: node authoring, an
+expanded library of mountains, ridges, canyons, craters, dunes, and other
+terrain primitives, GPU-backed generation, erosion and river systems, typed
+multi-output fields, mask editing, 3D preview, and engine-ready export.
 
 The next horizon is broader biome workflows and new physically informed
 simulations.

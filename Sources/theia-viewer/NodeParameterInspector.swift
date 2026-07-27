@@ -174,11 +174,24 @@ struct NodeParameterInspector: View {
     }
 
     private func basicParams(for node: GraphNodeInfo) -> [GraphParameter] {
-        node.params.filter { ParameterPresentation.for($0).group == .basic }
+        sorted(node.params.filter {
+            ParameterPresentation.for($0).group == .basic
+        })
     }
 
     private func advancedParams(for node: GraphNodeInfo) -> [GraphParameter] {
-        node.params.filter { ParameterPresentation.for($0).group == .advanced }
+        sorted(node.params.filter {
+            ParameterPresentation.for($0).group == .advanced
+        })
+    }
+
+    private func sorted(_ params: [GraphParameter]) -> [GraphParameter] {
+        params.sorted {
+            let lhs = ParameterPresentation.sortOrder(for: $0)
+            let rhs = ParameterPresentation.sortOrder(for: $1)
+            if lhs != rhs { return lhs < rhs }
+            return $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+        }
     }
 }
 
@@ -299,14 +312,32 @@ private struct NodePresentation {
 
     static func `for`(_ type: String) -> NodePresentation {
         switch type {
+        case "rollinghills":
+            return terrain(type, tint: .green)
+        case "mountain", "mountainrange":
+            return terrain(type, tint: .indigo)
+        case "canyon":
+            return terrain(type, tint: .orange)
+        case "crater", "craterfield":
+            return terrain(type, tint: .gray)
+        case "dunesea":
+            return terrain(type, tint: .yellow)
+        case "mountainside", "rugged":
+            return terrain(type, tint: .brown)
+        case "plates":
+            return terrain(type, tint: .teal)
+        case "ridge":
+            return terrain(type, tint: .purple)
+        case "slump":
+            return terrain(type, tint: .orange)
+        case "uplift":
+            return terrain(type, tint: .green)
+        case "volcano":
+            return terrain(type, tint: .red)
         case "perlin":
             return NodePresentation(icon: "waveform.path.ecg",
                                     tint: .blue,
                                     subtitle: "Noise source")
-        case "ridged":
-            return NodePresentation(icon: "mountain.2",
-                                    tint: .blue,
-                                    subtitle: "Ridged noise source")
         case "scalebias":
             return NodePresentation(icon: "plus.forwardslash.minus",
                                     tint: .purple,
@@ -356,6 +387,12 @@ private struct NodePresentation {
                                     tint: .secondary,
                                     subtitle: NodeTypeName.display(type))
         }
+    }
+
+    private static func terrain(_ type: String, tint: Color) -> NodePresentation {
+        NodePresentation(icon: NodeTypeCatalog.icon(for: type),
+                         tint: tint,
+                         subtitle: NodeTypeCatalog.subtitle(for: type))
     }
 }
 
@@ -514,6 +551,103 @@ private struct ParameterIconBox: View {
     }
 }
 
+enum TerrainParameterTier {
+    case basic
+    case advanced
+}
+
+enum TerrainParameterCatalog {
+    private static let parameterOrder: [String: [String]] = [
+        "rollinghills": [
+            "scale", "height", "softness", "undulation",
+            "warp", "seed",
+        ],
+        "mountain": [
+            "scale", "height", "bulk",
+            "roughness", "warp", "x", "y", "seed",
+        ],
+        "mountainrange": [
+            "scale", "height", "length", "width", "direction",
+            "peaks", "roughness", "warp", "x", "y", "seed",
+        ],
+        "canyon": [
+            "scale", "height", "depth", "width",
+            "branches", "wallSharpness", "roughness", "seed",
+        ],
+        "crater": [
+            "scale", "height", "depth", "rimHeight",
+            "rimWidth", "irregularity", "ejecta", "x", "y", "seed",
+        ],
+        "craterfield": [
+            "scale", "height", "density", "sizeVariation",
+            "rimHeight", "age", "irregularity", "seed",
+        ],
+        "dunesea": [
+            "scale", "height", "direction", "asymmetry",
+            "sharpness", "chaos", "warp", "seed",
+        ],
+        "mountainside": [
+            "scale", "height", "slope", "direction",
+            "peak", "detail", "warp", "x", "y", "seed",
+        ],
+        "plates": [
+            "scale", "height", "flatness", "boundaryUplift",
+            "tilt", "warp", "seed",
+        ],
+        "ridge": [
+            "scale", "height", "length", "width", "direction",
+            "definition", "fractures", "warp", "x", "y", "seed",
+        ],
+        "rugged": [
+            "scale", "height", "bulk",
+            "roughness", "fractures", "warp", "seed",
+        ],
+        "slump": [
+            "scale", "height", "collapse", "direction",
+            "softness", "lobes", "warp", "seed",
+        ],
+        "uplift": [
+            "scale", "height", "direction", "folds",
+            "foldWidth", "jitter", "roughness", "seed",
+        ],
+        "volcano": [
+            "scale", "height", "mouth", "calderaDepth",
+            "bulk", "radialErosion", "roughness", "x", "y", "seed",
+        ],
+    ]
+
+    private static let basicParameters: [String: Set<String>] = [
+        "rollinghills": ["scale", "height", "softness", "undulation"],
+        "mountain": ["scale", "height", "bulk"],
+        "mountainrange": ["scale", "height", "length", "width", "direction"],
+        "canyon": ["scale", "height", "depth", "width"],
+        "crater": ["scale", "height", "depth", "rimHeight"],
+        "craterfield": ["scale", "height", "density", "sizeVariation"],
+        "dunesea": ["scale", "height", "direction", "asymmetry"],
+        "mountainside": ["scale", "height", "slope", "direction"],
+        "plates": ["scale", "height", "flatness", "boundaryUplift"],
+        "ridge": ["scale", "height", "length", "width", "direction"],
+        "rugged": ["scale", "height", "bulk"],
+        "slump": ["scale", "height", "collapse", "direction"],
+        "uplift": ["scale", "height", "direction", "folds"],
+        "volcano": ["scale", "height", "mouth", "calderaDepth"],
+    ]
+
+    static func contains(_ nodeType: String) -> Bool {
+        parameterOrder[nodeType] != nil
+    }
+
+    static func sortOrder(nodeType: String, parameter: String) -> Int {
+        parameterOrder[nodeType]?.firstIndex(of: parameter) ?? 1_000
+    }
+
+    static func tier(nodeType: String,
+                     parameter: String) -> TerrainParameterTier? {
+        guard let basic = basicParameters[nodeType] else { return nil }
+        return basic.contains(parameter) ? .basic : .advanced
+    }
+}
+
 private enum ParameterGroup {
     case basic
     case advanced
@@ -545,7 +679,29 @@ private struct ParameterPresentation {
                               group: group(for: param))
     }
 
+    static func sortOrder(for param: GraphParameter) -> Int {
+        TerrainParameterCatalog.sortOrder(nodeType: param.nodeType,
+                                          parameter: param.name)
+    }
+
     private static func label(for param: GraphParameter) -> String {
+        if TerrainParameterCatalog.contains(param.nodeType) {
+            switch param.name {
+            case "scale": return "Feature Scale"
+            case "height": return "Relief"
+            case "x": return "Center X"
+            case "y": return "Center Y"
+            case "boundaryUplift": return "Boundary Uplift"
+            case "wallSharpness": return "Wall Sharpness"
+            case "rimHeight": return "Rim Height"
+            case "rimWidth": return "Rim Width"
+            case "sizeVariation": return "Size Variation"
+            case "foldWidth": return "Fold Width"
+            case "calderaDepth": return "Caldera Depth"
+            case "radialErosion": return "Radial Erosion"
+            default: break
+            }
+        }
         if param.nodeType == "hydraulic" {
             switch param.name {
             case "rain": return "Rainfall"
@@ -602,6 +758,57 @@ private struct ParameterPresentation {
     }
 
     private static func detail(for param: GraphParameter) -> String? {
+        if TerrainParameterCatalog.contains(param.nodeType) {
+            switch param.name {
+            case "scale": return "Sets the landform footprint."
+            case "height": return "Sets the overall vertical relief."
+            case "softness": return "Rounds hill crests and valleys."
+            case "undulation": return "Adds broad rises and dips."
+            case "warp": return "Bends the landform away from symmetry."
+            case "bulk": return "Controls the mass of the main form."
+            case "roughness": return "Adds small-scale surface breakup."
+            case "direction": return "Rotates the dominant landform axis."
+            case "length": return "Sets the feature's long-axis reach."
+            case "width":
+                return param.nodeType == "canyon"
+                    ? "Sets the canyon channel width."
+                    : "Sets the landform band width."
+            case "peaks": return "Sets the number of major summits."
+            case "depth": return "Controls basin or canyon incision."
+            case "branches": return "Sets the number of canyon tributaries."
+            case "wallSharpness": return "Hardens canyon walls and breaks."
+            case "rimHeight": return "Raises the crater rim above its surroundings."
+            case "rimWidth": return "Sets the crater rim thickness."
+            case "irregularity": return "Distorts otherwise circular impacts."
+            case "ejecta": return "Adds material radiating beyond the rim."
+            case "density": return "Sets the number of visible impacts."
+            case "sizeVariation": return "Varies crater sizes across the field."
+            case "age": return "Softens and wears older crater forms."
+            case "asymmetry": return "Offsets windward and slip-face slopes."
+            case "sharpness": return "Hardens dune crests."
+            case "chaos": return "Breaks the regular dune pattern."
+            case "slope": return "Sets the main mountainside grade."
+            case "peak": return "Positions the upper mountain influence."
+            case "detail": return "Adds secondary slope features."
+            case "flatness": return "Flattens plate interiors."
+            case "boundaryUplift": return "Raises relief along plate boundaries."
+            case "tilt": return "Offsets plate interiors with broad tilting."
+            case "definition": return "Sharpens the ridge crest."
+            case "fractures": return "Cuts broken seams through the surface."
+            case "collapse": return "Controls downslope failure."
+            case "lobes": return "Sets the number of depositional lobes."
+            case "folds": return "Sets the number of uplift folds."
+            case "foldWidth": return "Sets the width of individual folds."
+            case "jitter": return "Offsets fold spacing and alignment."
+            case "mouth": return "Sets the summit opening size."
+            case "calderaDepth": return "Lowers the volcanic caldera."
+            case "radialErosion": return "Cuts channels away from the summit."
+            case "x": return "Moves the landform center horizontally."
+            case "y": return "Moves the landform center vertically."
+            case "seed": return "Chooses a repeatable terrain variation."
+            default: break
+            }
+        }
         if param.nodeType == "hydraulic" {
             switch param.name {
             case "iterations":
@@ -716,6 +923,15 @@ private struct ParameterPresentation {
 
     private static func icon(for param: GraphParameter) -> String {
         switch param.name {
+        case "height": return "arrow.up.and.down"
+        case "direction": return "safari"
+        case "x": return "arrow.left.and.right"
+        case "y": return "arrow.up.and.down"
+        case "length": return "arrow.left.and.right"
+        case "branches", "peaks", "density", "lobes", "folds":
+            return "number"
+        case "roughness", "fractures", "irregularity", "chaos":
+            return "scribble.variable"
         case "frequency": return "waveform.path.ecg"
         case "gain": return "chart.line.uptrend.xyaxis"
         case "heightScale": return "mountain.2.fill"
@@ -746,6 +962,8 @@ private struct ParameterPresentation {
 
     private static func unit(for param: GraphParameter) -> String? {
         switch param.name {
+        case "direction" where TerrainParameterCatalog.contains(param.nodeType):
+            return "°"
         case "low" where param.nodeType == "slopemask",
              "high" where param.nodeType == "slopemask":
             return "°"
@@ -755,6 +973,10 @@ private struct ParameterPresentation {
     }
 
     private static func group(for param: GraphParameter) -> ParameterGroup {
+        if let tier = TerrainParameterCatalog.tier(nodeType: param.nodeType,
+                                                   parameter: param.name) {
+            return tier == .basic ? .basic : .advanced
+        }
         if param.nodeType == "hydraulic" {
             switch param.name {
             case "iterations", "rain", "sedimentCapacity", "suspension", "deposition":
@@ -893,15 +1115,7 @@ struct InspectorValueField: View {
 
 private enum NodeTypeName {
     static func display(_ type: String) -> String {
-        switch type {
-        case "scalebias": return "Scale Bias"
-        case "dropleterosion": return "Droplet Erosion"
-        case "erosionfilter": return "Erosion Filter"
-        case "rivercarve": return "River Carve"
-        case "slopemask": return "Slope Mask"
-        default:
-            return splitCamel(type.prefix(1).uppercased() + type.dropFirst())
-        }
+        NodeTypeCatalog.title(for: type)
     }
 }
 
@@ -940,6 +1154,46 @@ struct SliderConfig {
     }
 
     static func forParam(_ param: GraphParameter) -> SliderConfig {
+        // Terrain primitives intentionally resolve by node type first. Their
+        // artist-facing `scale` and `width` controls do not share the meaning
+        // or envelope of downstream shape/filter parameters with those names.
+        if NodeTypeCatalog.terrainTypes.contains(param.nodeType) {
+            switch param.name {
+            case "seed":
+                return SliderConfig(range: 0...9999, step: 1, precision: 0)
+            case "scale":
+                return SliderConfig(range: 0.05...1.5, step: 0.01, precision: 2)
+            case "direction":
+                return SliderConfig(range: 0...360, step: 1, precision: 0)
+            case "x", "y":
+                return SliderConfig(range: -1...1, step: 0.01, precision: 2)
+            case "length":
+                return SliderConfig(range: 0.25...2, step: 0.01, precision: 2)
+            case "width":
+                return SliderConfig(range: 0.02...0.6, step: 0.01, precision: 2)
+            case "branches":
+                return SliderConfig(range: 1...32, step: 1, precision: 0)
+            case "density":
+                return SliderConfig(range: 1...64, step: 1, precision: 0)
+            case "peaks", "folds":
+                return SliderConfig(range: 1...12, step: 1, precision: 0)
+            case "lobes":
+                return SliderConfig(range: 1...8, step: 1, precision: 0)
+            case "foldWidth":
+                return SliderConfig(range: 0.01...0.5, step: 0.01, precision: 2)
+            case "height", "softness", "undulation", "warp", "bulk",
+                 "roughness", "depth", "wallSharpness", "rimHeight",
+                 "rimWidth", "irregularity", "ejecta", "sizeVariation",
+                 "age", "asymmetry", "sharpness", "chaos", "slope",
+                 "peak", "detail", "flatness", "boundaryUplift", "tilt",
+                 "definition", "fractures", "collapse", "jitter", "mouth",
+                 "calderaDepth", "radialErosion":
+                return SliderConfig(range: 0...1, step: 0.01, precision: 2)
+            default:
+                break
+            }
+        }
+
         let name = param.name
         let value = param.value
         switch name {
@@ -1072,7 +1326,7 @@ struct SliderConfig {
             if param.nodeType == "fluvial" {
                 return SliderConfig(range: 1...4096, step: 1, precision: 0)
             }
-            if param.nodeType == "perlin" || param.nodeType == "ridged" {
+            if param.nodeType == "perlin" {
                 return SliderConfig(range: 0...2, step: 0.05, precision: 2)
             }
             if param.nodeType == "slopemask" {

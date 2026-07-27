@@ -726,40 +726,17 @@ final class TerrainModel: ObservableObject {
     func addQuickStart(kind: String) {
         pushUndo()
 
-        let selected: String
-        let createdTypes: [String]
+        let type: String
         switch kind {
-        case "ridged":
-            selected = document.addNode(type: "ridged",
-                                        at: GraphNodePosition(x: 120, y: 120))
-            createdTypes = ["ridged"]
-        case "terrace":
-            let perlin = document.addNode(type: "perlin",
-                                          at: GraphNodePosition(x: 80, y: 120))
-            let terrace = document.addNode(type: "terrace",
-                                           at: GraphNodePosition(x: 300, y: 120))
-            document.connect(from: perlin, to: terrace, input: 0)
-            selected = terrace
-            createdTypes = ["perlin", "terrace"]
-        case "river":
-            let perlin = document.addNode(type: "perlin",
-                                          at: GraphNodePosition(x: 80, y: 120))
-            let river = document.addNode(type: "river",
-                                         at: GraphNodePosition(x: 300, y: 168))
-            let carve = document.addNode(type: "rivercarve",
-                                         at: GraphNodePosition(x: 520, y: 120))
-            document.connect(from: perlin, to: river, input: 0)
-            document.connect(from: perlin, to: carve, input: 0)
-            document.connect(from: river, to: carve, input: 1)
-            selected = carve
-            createdTypes = ["perlin", "river", "rivercarve"]
+        case "rollinghills", "mountain", "mountainrange", "canyon":
+            type = kind
         default:
-            selected = document.addNode(type: "perlin",
-                                        at: GraphNodePosition(x: 120, y: 120))
-            createdTypes = ["perlin"]
+            type = "rollinghills"
         }
 
-        createdTypes.forEach(recordRecentNodeType)
+        let selected = document.addNode(type: type,
+                                        at: GraphNodePosition(x: 120, y: 120))
+        recordRecentNodeType(type)
         document.setSink(nodeId: selected)
         selectedNodeId = selected
         selectedNodeIds = [selected]

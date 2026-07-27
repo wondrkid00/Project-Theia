@@ -4,13 +4,21 @@
   "nodes": [
     {
       "id": "base",
-      "type": "perlin",
-      "params": { "seed": 1337, "octaves": 6, "frequency": 4.0, "lacunarity": 2.0, "gain": 0.5 }
+      "type": "rollinghills",
+      "params": {
+        "seed": 1337, "scale": 0.72, "height": 0.58,
+        "softness": 0.74, "undulation": 0.46, "warp": 0.16
+      }
     },
     {
       "id": "detail",
-      "type": "perlin",
-      "params": { "seed": 99, "octaves": 8, "frequency": 16.0, "lacunarity": 2.0, "gain": 0.45 }
+      "type": "mountainrange",
+      "params": {
+        "seed": 99, "scale": 0.68, "height": 0.88,
+        "length": 1.35, "width": 0.22, "direction": 32,
+        "peaks": 6, "roughness": 0.42, "warp": 0.24,
+        "x": 0.1, "y": -0.05
+      }
     },
     {
       "id": "mix",
