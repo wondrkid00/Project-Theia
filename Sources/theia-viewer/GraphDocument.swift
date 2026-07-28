@@ -269,6 +269,65 @@ struct GraphDocumentUI: Codable {
     }
 }
 
+/// Memoizes per-node-type metadata: default parameters and port declarations.
+///
+/// These are fixed by the core's node registry, but every lookup crosses into
+/// C++ and builds a throwaway node — `defaultParams` alone constructs `1 + 2N`
+/// of them, and `outputPorts` builds `1 + 4N`. The inspector re-derives defaults
+/// once per visible row and the canvas asks for both port lists several times
+/// per node, on every SwiftUI body pass, which lands squarely in the
+/// drag-a-slider loop. Caching turns each of those into a dictionary read.
+///
+/// Values depend only on the type string and never change at runtime, so the
+/// cache never needs invalidating.
+private final class NodeTypeMetadataCache: @unchecked Sendable {
+    static let shared = NodeTypeMetadataCache()
+
+    private let lock = NSLock()
+    private var defaults: [String: [String: Double]] = [:]
+    private var outputs: [String: [GraphOutputPort]] = [:]
+    private var inputs: [String: [GraphInputPort]] = [:]
+
+    func defaultParams(for type: String,
+                       build: () -> [String: Double]) -> [String: Double] {
+        if let hit = read({ $0.defaults[type] }) { return hit }
+        let value = build()
+        write { $0.defaults[type] = value }
+        return value
+    }
+
+    func outputPorts(for type: String,
+                     build: () -> [GraphOutputPort]) -> [GraphOutputPort] {
+        if let hit = read({ $0.outputs[type] }) { return hit }
+        let value = build()
+        write { $0.outputs[type] = value }
+        return value
+    }
+
+    func inputPorts(for type: String,
+                    build: () -> [GraphInputPort]) -> [GraphInputPort] {
+        if let hit = read({ $0.inputs[type] }) { return hit }
+        let value = build()
+        write { $0.inputs[type] = value }
+        return value
+    }
+
+    /// `build` runs outside the lock. Two threads racing a cold type may both
+    /// compute it, which is harmless — these are pure functions of the type —
+    /// and it keeps C++ calls from ever running under the lock.
+    private func read<T>(_ body: (NodeTypeMetadataCache) -> T?) -> T? {
+        lock.lock()
+        defer { lock.unlock() }
+        return body(self)
+    }
+
+    private func write(_ body: (NodeTypeMetadataCache) -> Void) {
+        lock.lock()
+        defer { lock.unlock() }
+        body(self)
+    }
+}
+
 struct GraphDocument: Codable {
     static let defaultResolution: UInt32 = 1024
 
@@ -969,6 +1028,12 @@ struct GraphDocument: Codable {
     }
 
     static func outputPorts(for type: String) -> [GraphOutputPort] {
+        NodeTypeMetadataCache.shared.outputPorts(for: type) {
+            uncachedOutputPorts(for: type)
+        }
+    }
+
+    private static func uncachedOutputPorts(for type: String) -> [GraphOutputPort] {
         let count = theia.graph_node_type_output_count(type)
         return (0..<count).compactMap { index in
             let name = readCxxString {
@@ -989,6 +1054,12 @@ struct GraphDocument: Codable {
     }
 
     static func inputPorts(for type: String) -> [GraphInputPort] {
+        NodeTypeMetadataCache.shared.inputPorts(for: type) {
+            uncachedInputPorts(for: type)
+        }
+    }
+
+    private static func uncachedInputPorts(for type: String) -> [GraphInputPort] {
         let count = theia.graph_node_type_input_count(type)
         return (0..<count).map { index in
             let name = readCxxString {
@@ -1039,6 +1110,12 @@ struct GraphDocument: Codable {
     }
 
     static func defaultParams(for type: String) -> [String: Double] {
+        NodeTypeMetadataCache.shared.defaultParams(for: type) {
+            uncachedDefaultParams(for: type)
+        }
+    }
+
+    private static func uncachedDefaultParams(for type: String) -> [String: Double] {
         var result: [String: Double] = [:]
         let count = theia.graph_default_param_count(type)
         for i in 0..<count {

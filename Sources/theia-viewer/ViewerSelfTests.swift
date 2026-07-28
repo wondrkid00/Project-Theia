@@ -710,6 +710,41 @@ func runViewerSelfTests() -> Int32 {
         expect(false, "Metal renderer unavailable for document rename test")
     }
 
+    // The encoded-document memo is keyed on a revision bumped by the document's
+    // `didSet`. If any mutation path ever stopped bumping it, the model would
+    // hand stale JSON to the evaluator and to diagnostics — the terrain would
+    // silently stop tracking edits. Exercise the mutations that matter.
+    if let device = MTLCreateSystemDefaultDevice(),
+       let renderer = Renderer(device: device, colorFormat: .bgra8Unorm),
+       let engine = TerrainEngine(graphPath: "examples/fluvial.json") {
+        let model = TerrainModel(engine: engine, renderer: renderer, size: 32)
+        let first = try? model.encodedDocumentText()
+        expect(first != nil && !(first ?? "").isEmpty,
+               "the encoded-document memo should produce the document JSON")
+        expect((try? model.encodedDocumentText()) == first,
+               "an unchanged document should reuse the memoized encoding")
+
+        model.apply(nodeId: "carve", param: "erodibility", value: 0.31)
+        let afterParam = try? model.encodedDocumentText()
+        expect(afterParam != nil && afterParam != first,
+               "a parameter edit must invalidate the encoded-document memo")
+        expect(afterParam?.contains("0.31") == true,
+               "the memo should re-encode to the newly applied value")
+
+        model.addNode(type: "blur")
+        let afterAdd = try? model.encodedDocumentText()
+        expect(afterAdd != nil && afterAdd != afterParam,
+               "adding a node must invalidate the encoded-document memo")
+
+        model.undo()
+        let afterUndo = try? model.encodedDocumentText()
+        expect(afterUndo == afterParam,
+               "undo must invalidate the memo and restore the prior encoding")
+        print("✓ encoded-document memo tracks every document mutation")
+    } else {
+        expect(false, "Metal renderer unavailable for encoded-document memo test")
+    }
+
     if let device = MTLCreateSystemDefaultDevice(),
        let renderer = Renderer(device: device, colorFormat: .bgra8Unorm),
        let engine = TerrainEngine(graphPath: "examples/erosion-filter.json") {

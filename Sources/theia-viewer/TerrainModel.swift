@@ -72,7 +72,12 @@ enum ViewportTool: String, CaseIterable, Identifiable {
 final class TerrainModel: ObservableObject {
     @Published private(set) var nodes: [GraphNodeInfo] = []
     @Published private(set) var lastStats = ""
-    @Published private(set) var document: GraphDocument
+    @Published private(set) var document: GraphDocument {
+        // Any mutation of the document — including in-place ones like
+        // `document.setParam(...)`, which read-modify-write through this
+        // property — invalidates the encoded-JSON memo below.
+        didSet { encodedDocumentRevision &+= 1 }
+    }
     @Published var selectedNodeId: String?
     @Published private(set) var selectedNodeIds: Set<String> = []
     @Published var selectedConnectionId: String?
@@ -109,6 +114,12 @@ final class TerrainModel: ObservableObject {
     @Published private(set) var graphPath: String?
     let availableNodeTypes: [String]
     private var documentCanSave = true
+    /// Encoding the document is the single most repeated main-thread cost in the
+    /// drag-a-slider loop: `apply` encodes once to submit a preview and again to
+    /// run diagnostics, on every tick. The memo below collapses that to one
+    /// encode per actual document change.
+    private var encodedDocumentRevision: UInt64 = 0
+    private var encodedDocumentCache: (revision: UInt64, text: String)?
     private var history = GraphDocumentHistory()
     private var isRestoringHistory = false
     private var isInteractiveMove = false
@@ -439,8 +450,24 @@ final class TerrainModel: ObservableObject {
         refreshDiagnostics()
     }
 
+    /// The document's JSON encoding for the current revision. Callers that only
+    /// need to *read* the encoded form should use this rather than re-encoding.
+    func encodedDocumentText() throws -> String {
+        if let cache = encodedDocumentCache,
+           cache.revision == encodedDocumentRevision {
+            return cache.text
+        }
+        let text = try document.encodedString()
+        encodedDocumentCache = (encodedDocumentRevision, text)
+        return text
+    }
+
     func refreshDiagnostics() {
-        diagnostics = GraphDiagnostics.analyze(document)
+        if let text = try? encodedDocumentText() {
+            diagnostics = GraphDiagnostics.analyze(jsonText: text)
+        } else {
+            diagnostics = GraphDiagnostics.analyze(document)
+        }
     }
 
     func apply(nodeId: String, param: String, value: Double) {
@@ -484,7 +511,7 @@ final class TerrainModel: ObservableObject {
         let geometryReference = document.terrainReference(for: dataReference) ?? dataReference
         let text: String
         do {
-            text = try document.encodedString()
+            text = try encodedDocumentText()
         } catch {
             cancelPreviewEvaluation()
             lastStats = error.localizedDescription
@@ -1163,7 +1190,7 @@ final class TerrainModel: ObservableObject {
     private func syncPreviewWithDocument(markDirty shouldMarkDirty: Bool) {
         refreshDiagnostics()
         do {
-            let text = try document.encodedString()
+            let text = try encodedDocumentText()
             if document.sink.isEmpty {
                 if engine.loadJSONText(text) {
                     documentCanSave = true
