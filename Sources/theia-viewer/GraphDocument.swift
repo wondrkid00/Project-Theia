@@ -270,6 +270,8 @@ struct GraphDocumentUI: Codable {
 }
 
 struct GraphDocument: Codable {
+    static let defaultResolution: UInt32 = 1024
+
     var formatVersion: Int
     var resolution: GraphResolution
     var sink: String
@@ -302,7 +304,8 @@ struct GraphDocument: Codable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         formatVersion = try c.decodeIfPresent(Int.self, forKey: .formatVersion) ?? 1
         resolution = try c.decodeIfPresent(GraphResolution.self, forKey: .resolution)
-            ?? GraphResolution(width: 512, height: 512)
+            ?? GraphResolution(width: Self.defaultResolution,
+                               height: Self.defaultResolution)
         sink = try c.decodeIfPresent(String.self, forKey: .sink) ?? ""
         sinkOutput = try c.decodeIfPresent(String.self, forKey: .sinkOutput) ?? ""
         nodes = try c.decodeIfPresent([GraphDocumentNode].self, forKey: .nodes) ?? []
@@ -345,7 +348,8 @@ struct GraphDocument: Codable {
         return doc
     }
 
-    static func emptyDocument(width: UInt32 = 512, height: UInt32 = 512) -> GraphDocument {
+    static func emptyDocument(width: UInt32 = defaultResolution,
+                              height: UInt32 = defaultResolution) -> GraphDocument {
         GraphDocument(formatVersion: 2,
                       resolution: GraphResolution(width: width, height: height),
                       sink: "",

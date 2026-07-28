@@ -17,6 +17,38 @@ struct GraphNodeInfo: Identifiable {
     var params: [GraphParameter]
 }
 
+struct PreviewEvaluationState: Equatable {
+    let nodeType: String
+    let output: String
+}
+
+struct GraphWorkspaceTab: Identifiable, Equatable {
+    let id: String
+    let title: String
+
+    static let root = GraphWorkspaceTab(id: "root", title: "Graph 1")
+}
+
+func normalizedGraphFilename(_ proposedName: String,
+                             existingFilename: String? = nil) -> String? {
+    let trimmed = proposedName.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty,
+          trimmed != ".",
+          trimmed != "..",
+          !trimmed.contains("/"),
+          !trimmed.contains("\\") else { return nil }
+
+    let proposedExtension = URL(fileURLWithPath: trimmed).pathExtension
+    if proposedExtension.isEmpty {
+        let existingExtension = existingFilename.map {
+            URL(fileURLWithPath: $0).pathExtension
+        } ?? ""
+        return "\(trimmed).\(existingExtension.isEmpty ? "json" : existingExtension)"
+    }
+    guard proposedExtension.lowercased() == "json" else { return nil }
+    return trimmed
+}
+
 /// Camera motion is high-frequency UI state. Keeping its revision in a small
 /// observable prevents orbit/pan/zoom from invalidating the entire inspector
 /// tree on every pointer event.
@@ -65,6 +97,10 @@ final class TerrainModel: ObservableObject {
     @Published private(set) var diagnostics = GraphDiagnostics.empty
     @Published private(set) var recentNodeTypes: [String] = []
     @Published private(set) var previewReference = GraphOutputReference(node: "", output: "")
+    @Published private(set) var previewEvaluation: PreviewEvaluationState?
+    @Published private(set) var graphTabs: [GraphWorkspaceTab] = [.root]
+    @Published private(set) var selectedGraphTabId = GraphWorkspaceTab.root.id
+    @Published var addNodePickerPresented = false
     let cameraSignal = ViewportCameraSignal()
 
     let engine: TerrainEngine
@@ -90,6 +126,7 @@ final class TerrainModel: ObservableObject {
     private var transientDisplayMode: ViewportDisplayMode?
     private var cleanDocumentFingerprint: String?
     private let previewWorker = TerrainPreviewWorker()
+    private var previewEvaluationRevision: UInt64 = 0
 
     private var activeOutputReference: GraphOutputReference {
         previewReference
@@ -98,6 +135,52 @@ final class TerrainModel: ObservableObject {
     var activeOutputSupportsMesh: Bool {
         document.resolvedOutputKind(nodeId: document.sink,
                                     output: document.sinkOutput) == .terrain
+    }
+
+    func requestAddNodePicker() {
+        addNodePickerPresented = true
+    }
+
+    func selectGraphTab(_ id: String) {
+        guard graphTabs.contains(where: { $0.id == id }) else { return }
+        selectedGraphTabId = id
+    }
+
+    @discardableResult
+    func renameDocumentFile(to proposedName: String) -> Bool {
+        guard let graphPath else {
+            saveStatus = "save the document to name it"
+            return false
+        }
+        let oldURL = URL(fileURLWithPath: graphPath)
+        guard let filename = normalizedGraphFilename(
+            proposedName,
+            existingFilename: oldURL.lastPathComponent) else {
+            saveStatus = "rename failed: use a valid .json filename"
+            return false
+        }
+        let newURL = oldURL.deletingLastPathComponent()
+            .appendingPathComponent(filename, isDirectory: false)
+        guard newURL.standardizedFileURL != oldURL.standardizedFileURL else {
+            return true
+        }
+        guard !FileManager.default.fileExists(atPath: newURL.path) else {
+            saveStatus = "rename failed: \(filename) already exists"
+            return false
+        }
+
+        do {
+            try FileManager.default.moveItem(at: oldURL, to: newURL)
+            self.graphPath = newURL.path
+            engine.setGraphPath(newURL.path)
+            exportSettings.basename = newURL.deletingPathExtension().lastPathComponent
+            saveStatus = "renamed"
+            lastSavedAt = Self.fileModifiedDate(path: newURL.path)
+            return true
+        } catch {
+            saveStatus = "rename failed: \(error.localizedDescription)"
+            return false
+        }
     }
 
     init(engine: TerrainEngine, renderer: Renderer, size: UInt32) {
@@ -403,15 +486,23 @@ final class TerrainModel: ObservableObject {
         do {
             text = try document.encodedString()
         } catch {
+            cancelPreviewEvaluation()
             lastStats = error.localizedDescription
             return false
         }
+        previewEvaluationRevision &+= 1
+        let evaluationRevision = previewEvaluationRevision
+        previewEvaluation = PreviewEvaluationState(
+            nodeType: document.node(id: dataReference.node)?.type ?? "",
+            output: dataReference.output)
         lastStats = "evaluating..."
         previewWorker.submit(jsonText: text,
                              geometry: geometryReference,
                              data: dataReference,
                              size: size) { [weak self] outcome in
-            guard let self else { return }
+            guard let self,
+                  evaluationRevision == self.previewEvaluationRevision else { return }
+            self.previewEvaluation = nil
             switch outcome {
             case .success(let preview):
                 self.currentPreviewGeometry = preview.geometry
@@ -432,7 +523,7 @@ final class TerrainModel: ObservableObject {
     }
 
     func refreshTerrainSynchronously() -> Bool {
-        previewWorker.cancelPending()
+        cancelPreviewEvaluation()
         currentScalarPreviewReference = nil
         let dataReference = activeOutputReference
         let mode = effectiveDisplayMode(for: dataReference)
@@ -480,7 +571,7 @@ final class TerrainModel: ObservableObject {
     }
 
     func setFlatPreview(status: String = "flat preview") {
-        previewWorker.cancelPending()
+        cancelPreviewEvaluation()
         let dim = max(2, Int(size == 0 ? document.resolution.width : size))
         let flat = [Float](repeating: 0, count: dim * dim)
         currentPreviewGeometry = flat
@@ -493,6 +584,12 @@ final class TerrainModel: ObservableObject {
                             width: dim, height: dim, dataMatchesHeights: true)
         applyViewportSettings(displayMode: .terrain)
         lastStats = status
+    }
+
+    private func cancelPreviewEvaluation() {
+        previewEvaluationRevision &+= 1
+        previewEvaluation = nil
+        previewWorker.cancelPending()
     }
 
     func hotReloadIfChanged() -> Bool {
@@ -636,15 +733,15 @@ final class TerrainModel: ObservableObject {
     func moveNode(id: String, by delta: CGSize) {
         let p = position(for: id)
         document.setPosition(nodeId: id,
-                             x: max(0, p.x + delta.width),
-                             y: max(0, p.y + delta.height))
+                             x: p.x + delta.width,
+                             y: p.y + delta.height)
         markDirty()
     }
 
     func moveNode(id: String, to position: GraphNodePosition) {
         document.setPosition(nodeId: id,
-                             x: max(0, position.x),
-                             y: max(0, position.y))
+                             x: position.x,
+                             y: position.y)
         markDirty()
     }
 
@@ -652,8 +749,8 @@ final class TerrainModel: ObservableObject {
         if !isRestoringHistory && !isInteractiveMove { pushUndo() }
         for (id, position) in positions {
             document.setPosition(nodeId: id,
-                                 x: max(0, position.x),
-                                 y: max(0, position.y))
+                                 x: position.x,
+                                 y: position.y)
         }
         markDirty()
     }
@@ -738,6 +835,9 @@ final class TerrainModel: ObservableObject {
                                         at: GraphNodePosition(x: 120, y: 120))
         recordRecentNodeType(type)
         document.setSink(nodeId: selected)
+        previewReference = GraphOutputReference(
+            node: selected,
+            output: GraphDocument.defaultOutputName(for: type))
         selectedNodeId = selected
         selectedNodeIds = [selected]
         selectedConnectionId = nil

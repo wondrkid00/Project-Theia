@@ -22,24 +22,38 @@ struct GraphColumn: View {
         .background(Color(nsColor: .underPageBackgroundColor))
     }
 
-    /// Single-tab strip. Gaea supports splitting a graph across several tabs;
-    /// Theia has one graph per document, so this shows the document as the sole
-    /// tab rather than pretending to offer more.
+    /// Workspace tabs are intentionally independent from the document filename.
+    /// There is one root tab today; the model boundary leaves room for portals
+    /// to expose additional graph scopes later without changing this strip.
     private var graphTabStrip: some View {
         HStack(spacing: 6) {
-            HStack(spacing: 6) {
-                Image(systemName: "point.3.connected.trianglepath.dotted")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                Text(graphName)
-                    .font(.system(size: 11, weight: .semibold))
-                    .lineLimit(1)
-                    .truncationMode(.middle)
+            ForEach(model.graphTabs) { tab in
+                Button {
+                    model.selectGraphTab(tab.id)
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "point.3.connected.trianglepath.dotted")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                        Text(tab.title)
+                            .font(.system(size: 11, weight: .semibold))
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                    .padding(.horizontal, 9)
+                    .frame(height: 24)
+                    .background(
+                        model.selectedGraphTabId == tab.id
+                            ? Color.white.opacity(0.08)
+                            : Color.clear,
+                        in: RoundedRectangle(cornerRadius: 5,
+                                             style: .continuous))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Graph tab \(tab.title)")
+                .accessibilityValue(
+                    model.selectedGraphTabId == tab.id ? "Selected" : "Not selected")
             }
-            .padding(.horizontal, 9)
-            .frame(height: 24)
-            .background(Color.white.opacity(0.08),
-                        in: RoundedRectangle(cornerRadius: 5, style: .continuous))
 
             Spacer(minLength: 4)
         }
@@ -53,10 +67,6 @@ struct GraphColumn: View {
         }
     }
 
-    private var graphName: String {
-        guard let path = model.graphPath else { return "Untitled graph" }
-        return URL(fileURLWithPath: path).deletingPathExtension().lastPathComponent
-    }
 }
 
 let graphColumnHeaderHeight: CGFloat = 34
@@ -94,14 +104,31 @@ struct GraphOutputTray: View {
                 .frame(height: 1)
         }
         .animation(.spring(response: 0.26, dampingFraction: 0.86), value: expanded)
-        .onChange(of: model.diagnostics.authoringErrorCount) { _, count in
-            // Only surface on a rising edge: a graph that is already failing
-            // should not reopen the tray on every re-evaluation.
-            if count > lastErrorCount, !userCollapsed {
+        .onAppear {
+            let count = model.diagnostics.authoringErrorCount
+            if Self.shouldAutoExpand(errorCount: count,
+                                     previousErrorCount: lastErrorCount,
+                                     userCollapsed: userCollapsed) {
                 expanded = true
             }
             lastErrorCount = count
         }
+        .onChange(of: model.diagnostics.authoringErrorCount) { _, count in
+            // Only surface on a rising edge: a graph that is already failing
+            // should not reopen the tray on every re-evaluation.
+            if Self.shouldAutoExpand(errorCount: count,
+                                     previousErrorCount: lastErrorCount,
+                                     userCollapsed: userCollapsed) {
+                expanded = true
+            }
+            lastErrorCount = count
+        }
+    }
+
+    static func shouldAutoExpand(errorCount: Int,
+                                 previousErrorCount: Int,
+                                 userCollapsed: Bool) -> Bool {
+        !userCollapsed && errorCount > 0 && errorCount > previousErrorCount
     }
 
     private var summaryBar: some View {
@@ -121,9 +148,6 @@ struct GraphOutputTray: View {
                     .textCase(.uppercase)
                     .kerning(0.4)
 
-                countChip(model.diagnostics.authoringErrorCount, color: .red)
-                countChip(model.diagnostics.authoringWarningCount, color: .orange)
-
                 if !expanded {
                     Text(summaryText)
                         .font(.system(size: 11))
@@ -133,6 +157,11 @@ struct GraphOutputTray: View {
                 }
 
                 Spacer(minLength: 0)
+
+                if expanded {
+                    countChip(model.diagnostics.authoringErrorCount, color: .red)
+                    countChip(model.diagnostics.authoringWarningCount, color: .orange)
+                }
             }
             .padding(.horizontal, 10)
             .frame(height: barHeight)

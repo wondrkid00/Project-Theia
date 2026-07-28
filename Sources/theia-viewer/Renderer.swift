@@ -23,6 +23,8 @@ struct LineVertex {
 // Renders a heightfield as a lit, displaced triangle grid. Shared by the live
 // MTKView path and the offscreen --shot path.
 final class Renderer {
+    static let maxViewerGridDimension = 1024
+
     let device: MTLDevice
     let queue: MTLCommandQueue
     let colorFormat: MTLPixelFormat
@@ -44,7 +46,10 @@ final class Renderer {
     private var axisLineVertexCount = 0
     private(set) var gridW: UInt32 = 0
     private(set) var gridH: UInt32 = 0
-    private let maxViewerGrid = 768
+    // Keep the default 1024² terrain one-to-one with the rendered mesh. The
+    // previous 768 cap introduced a repeating 4:3 decimation pattern that
+    // became visible as false terraces when the camera approached a slope.
+    private let maxViewerGrid = Renderer.maxViewerGridDimension
 
     var camera = OrbitCamera.framed(heightExaggeration: 0.5)
     var heightExaggeration: Float = 0.5

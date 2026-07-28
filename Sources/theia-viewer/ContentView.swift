@@ -33,6 +33,14 @@ struct ContentView: View {
                     ZStack(alignment: .bottomTrailing) {
                         ViewportSurface(model: model, viewport: viewport)
 
+                        if let evaluation = model.previewEvaluation {
+                            PreviewEvaluationBadge(evaluation: evaluation)
+                                .padding(.leading, 14)
+                                .padding(.bottom, 12)
+                                .frame(maxWidth: .infinity, maxHeight: .infinity,
+                                       alignment: .bottomLeading)
+                        }
+
                         StatusBadge(model: model)
                             .padding(.trailing, 14)
                             .padding(.bottom, 12)
@@ -53,6 +61,44 @@ struct ContentView: View {
             }
         }
         .ignoresSafeArea(.container, edges: .top)
+    }
+}
+
+struct PreviewEvaluationBadge: View {
+    let evaluation: PreviewEvaluationState
+
+    private var previewTitle: String {
+        let title = NodeTypeCatalog.title(for: evaluation.nodeType)
+        let nodeTitle = title.isEmpty ? "terrain" : title
+        let defaultOutput = GraphDocument.defaultOutputName(for: evaluation.nodeType)
+        guard !evaluation.output.isEmpty,
+              evaluation.output != defaultOutput else { return nodeTitle }
+        return "\(nodeTitle) · \(evaluation.output.capitalized)"
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Text("Updating \(previewTitle) preview…")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.88))
+                .lineLimit(1)
+
+            ProgressView()
+                .progressViewStyle(.linear)
+                .tint(NodeTypeCatalog.categoryColor(for: evaluation.nodeType))
+                .frame(width: 210)
+        }
+        .padding(.horizontal, 11)
+        .padding(.vertical, 9)
+        .background(Color.black.opacity(0.68),
+                    in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(Color.white.opacity(0.09), lineWidth: 1))
+        .allowsHitTesting(false)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Preview status")
+        .accessibilityValue("Updating \(previewTitle) preview")
     }
 }
 

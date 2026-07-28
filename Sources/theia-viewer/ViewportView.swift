@@ -137,8 +137,6 @@ final class TerrainMTKView: MTKView {
             model.setMaskBrushEnabled(!model.maskBrushEnabled)
         case "g":
             model.setGridVisible(!model.gridVisible)
-        case "a":
-            model.setAxisVisible(!model.axisVisible)
         case "w":
             model.wireframeEnabled.toggle()
             model.applyViewportSettings()

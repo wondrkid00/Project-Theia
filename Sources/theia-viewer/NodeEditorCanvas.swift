@@ -1180,7 +1180,6 @@ struct CanvasToolbar: View {
     @Binding var zoom: Double
     let viewport: TerrainMTKView
     let onFitRequested: () -> Void
-    @State private var addPopoverPresented = false
     @State private var selectedAddGroupId: String?
 
     var body: some View {
@@ -1189,18 +1188,18 @@ struct CanvasToolbar: View {
         // action keeps its tooltip, so nothing becomes unidentifiable.
         HStack(spacing: 2) {
             Button {
-                addPopoverPresented.toggle()
+                model.addNodePickerPresented.toggle()
             } label: {
                 toolbarIcon("plus", help: "Add node (A)")
             }
             .buttonStyle(.plain)
-            .popover(isPresented: $addPopoverPresented, arrowEdge: .bottom) {
+            .popover(isPresented: $model.addNodePickerPresented, arrowEdge: .bottom) {
                 AddNodePalette(groups: NodeTypeCatalog.grouped(model.availableNodeTypes),
                                recentTypes: model.recentNodeTypes,
                                selectedGroupId: $selectedAddGroupId) { type in
                     model.addNode(type: type)
                     viewport.setNeedsDisplay(viewport.bounds)
-                    addPopoverPresented = false
+                    model.addNodePickerPresented = false
                 }
             }
 

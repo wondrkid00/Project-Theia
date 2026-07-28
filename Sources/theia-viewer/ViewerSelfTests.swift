@@ -35,6 +35,49 @@ func runViewerSelfTests() -> Int32 {
                                    fallback: fallbackWindowFrame) ==
            fallbackWindowFrame,
            "interactive window should retain a safe fallback without a display")
+    let defaultDocument = GraphDocument.defaultDocument()
+    expect(defaultDocument.resolution.width == 1024 &&
+           defaultDocument.resolution.height == 1024,
+           "new terrain documents should start at 1024 x 1024")
+    expect(previewEvaluationSize(requested: 0, documentWidth: nil) == 1024,
+           "an untitled preview should use the 1024 base resolution")
+    expect(previewEvaluationSize(requested: 0, documentWidth: 384) == 384,
+           "an existing document should retain its stored preview resolution")
+    expect(previewEvaluationSize(requested: 256, documentWidth: 1024) == 256,
+           "an explicit --size override should win over the document")
+    let defaultCamera = OrbitCamera.framed(heightExaggeration: 0.5)
+    expect(defaultCamera.distance < 2.6,
+           "default camera framing should give the terrain a broader footprint")
+    expect(Renderer.maxViewerGridDimension >= Int(GraphDocument.defaultResolution),
+           "the default 1024 terrain must reach the viewport without resampling")
+    expect(titleBarDocumentName(path: nil) == "Untitled graph",
+           "untitled documents should have a stable title bar label")
+    expect(titleBarDocumentName(path: "/tmp/terrain.graph.json") ==
+           "terrain.graph.json",
+           "document controls should display only the filename")
+    expect(GraphWorkspaceTab.root == GraphWorkspaceTab(id: "root",
+                                                       title: "Graph 1"),
+           "the root workspace tab should be independent from the filename")
+    expect(normalizedGraphFilename("  terrain  ") == "terrain.json",
+           "inline rename should trim names and add the graph extension")
+    expect(normalizedGraphFilename("terrain-v2",
+                                   existingFilename: "terrain.JSON") ==
+           "terrain-v2.JSON",
+           "inline rename should preserve an existing graph extension")
+    expect(normalizedGraphFilename("../terrain.json") == nil &&
+           normalizedGraphFilename("terrain.txt") == nil,
+           "inline rename should reject paths and unsupported extensions")
+    let windowDragPolicyProbe = NSWindow(
+        contentRect: fallbackWindowFrame,
+        styleMask: [.titled, .fullSizeContentView],
+        backing: .buffered,
+        defer: false)
+    configureTheiaWindowDragging(windowDragPolicyProbe)
+    expect(!windowDragPolicyProbe.isMovable &&
+           !windowDragPolicyProbe.isMovableByWindowBackground,
+           "implicit titlebar dragging should be disabled behind toolbar controls")
+    expect(!WindowDragRegionView().mouseDownCanMoveWindow,
+           "the explicit blank-space drag region should own window movement")
     print("✓ windowed fullscreen startup geometry")
 
     do {
@@ -278,6 +321,29 @@ func runViewerSelfTests() -> Int32 {
         keyCode: 0)
     expect(commandA.map(NodePickerSearchField.isSelectAllShortcut) == true,
            "node picker search should recognize Command-A")
+    let plainA = NSEvent.keyEvent(
+        with: .keyDown,
+        location: .zero,
+        modifierFlags: [],
+        timestamp: 0,
+        windowNumber: 0,
+        context: nil,
+        characters: "a",
+        charactersIgnoringModifiers: "a",
+        isARepeat: false,
+        keyCode: 0)
+    expect(plainA.map(isAddNodeShortcut) == true,
+           "plain A should request the graph node picker")
+    expect(commandA.map(isAddNodeShortcut) == false,
+           "Command-A must remain reserved for text selection")
+    expect(GraphOutputTray.shouldAutoExpand(errorCount: 1,
+                                            previousErrorCount: 0,
+                                            userCollapsed: false),
+           "initial graph errors should expand the output tray")
+    expect(!GraphOutputTray.shouldAutoExpand(errorCount: 1,
+                                             previousErrorCount: 0,
+                                             userCollapsed: true),
+           "a manually collapsed output tray should stay closed")
     print("✓ graph picker geometry and readable node titles")
 
     var document = GraphDocument.emptyDocument(width: 64, height: 64)
@@ -610,12 +676,59 @@ func runViewerSelfTests() -> Int32 {
     print("✓ realtime bounded mask brush rasterization")
 
     if let device = MTLCreateSystemDefaultDevice(),
+       let renderer = Renderer(device: device, colorFormat: .bgra8Unorm) {
+        let renameDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("theia-rename-\(UUID().uuidString)",
+                                    isDirectory: true)
+        let originalURL = renameDirectory.appendingPathComponent("before.json")
+        let renamedURL = renameDirectory.appendingPathComponent("after.json")
+        do {
+            try FileManager.default.createDirectory(
+                at: renameDirectory,
+                withIntermediateDirectories: true)
+            try FileManager.default.copyItem(
+                at: URL(fileURLWithPath: "examples/foundation.json"),
+                to: originalURL)
+            defer { try? FileManager.default.removeItem(at: renameDirectory) }
+
+            if let engine = TerrainEngine(graphPath: originalURL.path) {
+                let model = TerrainModel(engine: engine, renderer: renderer, size: 32)
+                expect(model.renameDocumentFile(to: "after"),
+                       "inline document rename should move an existing graph file")
+                expect(model.graphPath == renamedURL.path &&
+                       FileManager.default.fileExists(atPath: renamedURL.path) &&
+                       !FileManager.default.fileExists(atPath: originalURL.path),
+                       "document rename should update the model and filesystem together")
+            } else {
+                expect(false, "rename regression graph should load")
+            }
+        } catch {
+            expect(false, "rename regression setup failed: \(error)")
+        }
+        print("✓ inline document filename rename")
+    } else {
+        expect(false, "Metal renderer unavailable for document rename test")
+    }
+
+    if let device = MTLCreateSystemDefaultDevice(),
        let renderer = Renderer(device: device, colorFormat: .bgra8Unorm),
        let engine = TerrainEngine(graphPath: "examples/erosion-filter.json") {
         let model = TerrainModel(engine: engine, renderer: renderer, size: 32)
         let originalSink = GraphOutputReference(node: model.document.sink,
                                                 output: model.document.sinkOutput)
         expect(!model.isDirty, "loading a graph should begin clean")
+        expect(!model.addNodePickerPresented,
+               "add-node picker should begin closed")
+        expect(model.graphTabs == [.root] &&
+               model.selectedGraphTabId == GraphWorkspaceTab.root.id,
+               "documents should begin on the filename-independent root graph tab")
+        model.selectGraphTab("missing")
+        expect(model.selectedGraphTabId == GraphWorkspaceTab.root.id,
+               "unknown graph tabs must not change the active workspace")
+        model.requestAddNodePicker()
+        expect(model.addNodePickerPresented,
+               "add-node command should present the shared toolbar picker")
+        model.addNodePickerPresented = false
         model.selectOutput(nodeId: "gullies", output: "ridge")
         expect(model.previewReference == GraphOutputReference(node: "gullies",
                                                               output: "ridge"),
@@ -628,6 +741,25 @@ func runViewerSelfTests() -> Int32 {
         expect(model.document.sink == "gullies" && model.document.sinkOutput == "ridge",
                "explicit Set as Graph Output should persist the preview port")
         expect(model.isDirty, "explicit graph output change should dirty the document")
+
+        model.moveNode(id: "gullies",
+                       to: GraphNodePosition(x: -180, y: -90))
+        expect(model.position(for: "gullies") ==
+               GraphNodePosition(x: -180, y: -90),
+               "node canvas positions should remain unbounded in every direction")
+
+        model.selectNodes(Set(model.document.nodes.map(\.id)))
+        model.deleteSelection()
+        expect(model.document.nodes.isEmpty,
+               "quick-add regression setup should produce an empty graph")
+        model.addQuickStart(kind: "mountain")
+        if let quickAdded = model.selectedNodeId {
+            expect(model.previewReference ==
+                   GraphOutputReference(node: quickAdded, output: "terrain"),
+                   "quick-add should immediately preview its selected node")
+        } else {
+            expect(false, "quick-add should select the created node")
+        }
         print("✓ ephemeral preview and explicit graph-output authoring")
     } else {
         expect(false, "Metal renderer unavailable for preview/output separation test")
@@ -637,6 +769,18 @@ func runViewerSelfTests() -> Int32 {
        let renderer = Renderer(device: device, colorFormat: .bgra8Unorm),
        let engine = TerrainEngine(graphPath: "examples/fluvial.json") {
         let model = TerrainModel(engine: engine, renderer: renderer, size: 32)
+        model.selectOutput(nodeId: "carve", output: "terrain")
+        model.selectOutput(nodeId: "carve", output: "flow")
+        expect(model.previewEvaluation ==
+               PreviewEvaluationState(nodeType: "fluvial", output: "flow"),
+               "preview status should identify the latest requested simulation output")
+        let previewStatusDeadline = Date().addingTimeInterval(10)
+        while model.previewEvaluation != nil && Date() < previewStatusDeadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+        }
+        expect(model.previewEvaluation == nil,
+               "preview status should clear when the latest simulation is delivered")
+
         let originalNodeCount = model.document.nodes.count
         let originalConnections = model.document.connections
         let invalid = model.connect(from: "carve", output: "flow",
@@ -669,7 +813,7 @@ func runViewerSelfTests() -> Int32 {
                model.document.connections == originalConnections &&
                !model.isDirty,
                "one undo should remove the contextual node and its connection")
-        print("✓ guarded connection and atomic contextual creation")
+        print("✓ guarded connection, preview progress, and atomic contextual creation")
     } else {
         expect(false, "Metal renderer unavailable for typed connection model test")
     }

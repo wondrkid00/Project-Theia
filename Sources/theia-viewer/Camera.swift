@@ -76,7 +76,9 @@ struct OrbitCamera {
     static func framed(heightExaggeration: Float) -> OrbitCamera {
         var c = OrbitCamera()
         c.target = SIMD3<Float>(0, max(0.04, heightExaggeration * 0.35), 0)
-        c.distance = max(2.8, 2.45 + heightExaggeration * 1.1)
+        // Keep the full square visible while letting it occupy substantially
+        // more of the viewport than the old, distant overview framing.
+        c.distance = max(2.35, 2.05 + heightExaggeration * 0.8)
         c.azimuth = .pi * 0.25
         c.elevation = .pi * 0.28
         c.fovy = 50 * .pi / 180

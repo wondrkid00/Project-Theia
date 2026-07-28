@@ -3,7 +3,7 @@
 // Usage:
 //   theia-viewer [GRAPH.json]            open an interactive window
 //   theia-viewer --shot OUT.png [GRAPH]  render one frame offscreen and exit
-//   theia-viewer --size N                evaluate at N x N (default 512)
+//   theia-viewer --size N                evaluate at N x N (default 1024)
 //   theia-viewer --smoke                 open + auto-close (build/launch self-test)
 //   Saving GRAPH.json while the window is open hot-reloads the terrain.
 //
@@ -18,7 +18,7 @@ import UniformTypeIdentifiers
 struct Args {
     var graphPath: String?
     var shotPath: String?
-    var size: UInt32 = 0      // 0 => default (512)
+    var size: UInt32 = 0      // 0 => document resolution (new graphs use 1024)
     var smoke = false
     var selfTest = false
     // optional camera overrides (mainly for --shot verification)
@@ -129,6 +129,14 @@ final class AutosaveController: NSObject {
     return false
 }
 
+func isAddNodeShortcut(_ event: NSEvent) -> Bool {
+    let conflictingModifiers: NSEvent.ModifierFlags = [.command, .control, .option]
+    guard event.modifierFlags.intersection(conflictingModifiers).isEmpty else {
+        return false
+    }
+    return event.charactersIgnoringModifiers?.lowercased() == "a"
+}
+
 func windowedFullscreenFrame(visibleFrame: NSRect?, fallback: NSRect) -> NSRect {
     guard let visibleFrame,
           visibleFrame.width > 0,
@@ -138,11 +146,35 @@ func windowedFullscreenFrame(visibleFrame: NSRect?, fallback: NSRect) -> NSRect 
     return visibleFrame
 }
 
+func previewEvaluationSize(requested: UInt32,
+                           documentWidth: UInt32?) -> UInt32 {
+    if requested > 0 {
+        return requested
+    }
+    if let documentWidth, documentWidth > 1 {
+        return documentWidth
+    }
+    return GraphDocument.defaultResolution
+}
+
+@MainActor
+func configureTheiaWindowDragging(_ window: NSWindow) {
+    // SwiftUI's plain buttons inside a full-size transparent titlebar can be
+    // misclassified as draggable background during a click-drag. Disable the
+    // implicit server-side behavior; TheiaTitleBar restores dragging only in
+    // its explicit WindowDragRegion.
+    window.isMovable = false
+    window.isMovableByWindowBackground = false
+}
+
 let args = parseArgs()
 if args.selfTest {
     exit(runViewerSelfTests())
 }
-let viewSize: UInt32 = args.size != 0 ? args.size : 512
+let storedDocumentWidth = args.graphPath
+    .flatMap { try? GraphDocument.load(path: $0).resolution.width }
+let viewSize = previewEvaluationSize(requested: args.size,
+                                     documentWidth: storedDocumentWidth)
 
 guard let device = MTLCreateSystemDefaultDevice() else { fail("no Metal device available") }
 guard let engine = TerrainEngine(graphPath: args.graphPath) else { fail("graph init failed") }
@@ -194,6 +226,7 @@ window.title = "Theia Viewer"
 // lights. This reclaims a full toolbar strip of vertical space.
 window.titlebarAppearsTransparent = true
 window.titleVisibility = .hidden
+configureTheiaWindowDragging(window)
 
 let mtkView = TerrainMTKView(frame: frame, device: device)
 mtkView.colorPixelFormat = .bgra8Unorm
@@ -234,6 +267,10 @@ let shortcutMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { eve
     }
     if firstResponderIsTextInput(in: event.window) {
         return event
+    }
+    if isAddNodeShortcut(event) {
+        model.requestAddNodePicker()
+        return nil
     }
     if event.modifierFlags.contains(.command), chars == "z" {
         if event.modifierFlags.contains(.shift) {

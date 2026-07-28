@@ -502,17 +502,18 @@ struct ParameterSlider: View {
             Button(action: onReset) {
                 Image(systemName: "arrow.counterclockwise")
                     .font(.system(size: 9, weight: .bold))
-                    .frame(width: 16, height: 16)
+                    .frame(width: 24, height: 24)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .foregroundStyle(Color.accentColor)
+            .accessibilityLabel("Reset \(presentation.label)")
             .help("Reset \(presentation.label)")
         } else {
             Circle()
                 .fill(Color.secondary.opacity(0.20))
                 .frame(width: 4, height: 4)
-                .frame(width: 16, height: 16)
+                .frame(width: 24, height: 24)
         }
     }
 

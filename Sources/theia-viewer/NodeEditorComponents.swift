@@ -122,10 +122,10 @@ struct NodeCard: View {
             VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: 5) {
                     Image(systemName: NodeTypeCatalog.icon(for: node.type))
-                        .font(.system(size: 8, weight: .bold))
+                        .font(.system(size: 10, weight: .bold))
                         .foregroundStyle(categoryColor)
                     Text(NodeTypeCatalog.categoryTitle(for: node.type))
-                        .font(.system(size: 8, weight: .bold))
+                        .font(.system(size: 10, weight: .bold))
                         .foregroundStyle(categoryColor)
                         .textCase(.uppercase)
                         .kerning(0.4)
@@ -173,7 +173,7 @@ struct NodeCard: View {
             ForEach(inputPorts) { input in
                 let state = inputDragStates[input.index] ?? .idle
                 Text(input.name)
-                    .font(.system(size: 8, design: .monospaced))
+                    .font(.system(size: 10, design: .monospaced))
                     .foregroundStyle(state == .incompatible
                                      ? Color.secondary.opacity(0.35)
                                      : Color.secondary)
@@ -199,7 +199,7 @@ struct NodeCard: View {
                 let rowY = NodePortLayout.outputY(index)
                 HStack(spacing: 5) {
                     Text(output.name)
-                        .font(.system(size: 8, design: .monospaced))
+                        .font(.system(size: 10, design: .monospaced))
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .trailing)
                     PortView(color: GraphPortPalette.color(output.declaredKind))
