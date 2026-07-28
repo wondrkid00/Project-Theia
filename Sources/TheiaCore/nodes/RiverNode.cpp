@@ -23,8 +23,14 @@ namespace {
 struct RiverParams {
     std::uint32_t seed = 1337;
     float water = 0.65f;        // network density / wetness
-    float width = 2.0f;         // visible channel width in cells
+    // Authored channel width in WORLD units, not cells. A river is a physical
+    // width, so a cell-based radius made the rendered channel thin in inverse
+    // proportion to resolution. See terrain-horizontal-scale-notes.md.
+    float width = 4.0f;
+    float terrainSize = 1024.0f;   // world span of the domain
     std::uint32_t headwaters = 32;
+    // Derived: `width` expressed in cells at the evaluation grid.
+    float widthCells = 2.0f;
 };
 
 struct Vec2 {
@@ -67,13 +73,22 @@ float hashUnit(std::uint32_t seed, std::uint32_t value) {
     return float(x >> 8u) * (1.0f / 16777216.0f);
 }
 
-RiverParams readParams(const ParamSet& params) {
+RiverParams readParams(const ParamSet& params, std::uint32_t gridWidth) {
     RiverParams p;
     p.seed = static_cast<std::uint32_t>(std::max(0.0, params.get("seed", 1337)));
     p.water = clamp01(static_cast<float>(params.get("water", 0.65)));
-    p.width = std::min(32.0f, std::max(0.5f, static_cast<float>(params.get("width", 2.0))));
+    p.width = std::min(64.0f, std::max(0.5f, static_cast<float>(params.get("width", 4.0))));
+    p.terrainSize = static_cast<float>(
+        std::min(65536.0, std::max(1.0, params.get("terrainSize", 1024.0))));
     p.headwaters =
         static_cast<std::uint32_t>(std::min(512.0, std::max(1.0, params.get("headwaters", 32))));
+
+    // World width -> cells at this grid. The upper clamp bounds the softening
+    // blur, which is O(n * radius) per pass; above it the channel saturates
+    // rather than growing without limit.
+    const float intervals = static_cast<float>(std::max(1u, gridWidth - 1u));
+    const float cell = std::max(1e-6f, p.terrainSize / intervals);
+    p.widthCells = std::min(64.0f, std::max(0.5f, p.width / cell));
     return p;
 }
 
@@ -824,7 +839,7 @@ std::vector<float> riverMask(const std::vector<float>& terrain,
     std::vector<float> trace(n, 0.0f);
 
     const float spacing = std::max(7.0f, float(std::min(w, h)) / 26.0f);
-    const float baseRadius = std::max(0.75f, p.width * (0.50f + 0.18f * p.water));
+    const float baseRadius = std::max(0.75f, p.widthCells * (0.50f + 0.18f * p.water));
     for (std::size_t anchorIndex = 0; anchorIndex < anchors.size(); ++anchorIndex) {
         const RiverAnchor& anchor = anchors[anchorIndex];
         const std::size_t start = entryCell(anchor, w, h);
@@ -853,7 +868,7 @@ std::vector<float> riverMask(const std::vector<float>& terrain,
     for (std::size_t i = 0; i < n; ++i) {
         mask[i] = clamp01(trace[i]);
     }
-    mask = boxBlur(mask, w, h, std::max(1, int(std::ceil(p.width * 0.75f))), 3);
+    mask = boxBlur(mask, w, h, std::max(1, int(std::ceil(p.widthCells * 0.75f))), 3);
     for (float& v : mask) {
         v = smoothStep(0.045f, 0.56f, v);
     }
@@ -864,7 +879,10 @@ std::vector<float> riverMask(const std::vector<float>& terrain,
 
 RiverNode::RiverNode(std::string id) : Node(std::move(id), "river") {
     params.set("water", 0.65);
-    params.set("width", 2.0);
+    // World units, not cells. 4.0 reproduces the previously tuned appearance
+    // at the old 512 default grid and now holds it at any resolution.
+    params.set("width", 4.0);
+    params.set("terrainSize", 1024.0);
     params.set("headwaters", 32);
     params.set("seed", 1337);
 }
@@ -879,7 +897,7 @@ bool RiverNode::evaluate(GPUContext&,
     const Heightfield* in = inputs[0];
     const std::uint32_t w = in->width();
     const std::uint32_t h = in->height();
-    const RiverParams p = readParams(params);
+    const RiverParams p = readParams(params, w);
 
     std::vector<float> terrain(in->data(), in->data() + in->count());
     for (float& v : terrain) v = clamp01(v);

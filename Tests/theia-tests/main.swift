@@ -468,6 +468,118 @@ h.test("Slope mask coverage is stable across sampling resolutions") {
              "slope coverage drifted with resolution: \(coverages)")
 }
 
+func riverGraphJSON(terrainSize: Double, width: Double = 2.0) -> String {
+    """
+    {
+      "resolution": { "width": 256, "height": 256 },
+      "sink": "rivers",
+      "sinkOutput": "mask",
+      "nodes": [
+        { "id": "p", "type": "perlin", "params": {
+          "seed": 7, "frequency": 1.3, "octaves": 5,
+          "lacunarity": 2.0, "gain": 0.5, "heightScale": 1.0
+        } },
+        { "id": "rivers", "type": "river", "params": {
+          "water": 0.65, "width": \(width), "headwaters": 24, "seed": 1337,
+          "terrainSize": \(terrainSize)
+        } }
+      ],
+      "connections": [ { "from": "p", "to": "rivers", "input": 0 } ]
+    }
+    """
+}
+
+h.test("River mask width is stable across sampling resolutions") {
+    // The river channel is a world-space feature: at a fixed terrainSize the
+    // same terrain sampled more finely must yield a channel of the same width,
+    // not one that thins as the grid refines. Before the world-scale fix the
+    // radius was measured in cells, so coverage fell roughly with 1/resolution
+    // and a graph previewed at 1024 exported at 4096 with far thinner rivers.
+    let json = riverGraphJSON(terrainSize: 1024)
+    var coverages: [Double] = []
+    for grid in [UInt32(256), 512, 1024] {
+        let mask = evalGraphOutputHeightsJSON(json, sink: "rivers",
+                                              output: "mask", size: grid)
+        h.expect(mask.allSatisfy { $0.isFinite && $0 >= 0 && $0 <= 1 },
+                 "river mask left [0,1] at \(grid)")
+        let coverage = meanCoverage(mask)
+        h.expect(coverage > 0.002,
+                 "river mask vanished at \(grid): coverage \(coverage)")
+        coverages.append(coverage)
+    }
+    let low = coverages.min() ?? 0
+    let high = coverages.max() ?? 0
+    h.expect(low > 0 && high / low < 1.6,
+             "river width drifted with resolution: \(coverages)")
+}
+
+h.test("Legacy river width migrates from cells to world units") {
+    // A pre-v3 document authored `width` in cells. Migration converts it at the
+    // document's OWN declared resolution, which reproduces that document's
+    // channel exactly there and makes every other resolution agree with it.
+    let riverWidth = { @MainActor (json: String) -> Double in
+        guard let g = theia.graph_create() else {
+            h.expect(false, "create failed")
+            return .nan
+        }
+        defer { theia.graph_destroy(g) }
+        h.expect(theia.graph_load_json_text(g, json), "load: \(graphError(g))")
+        return theia.graph_param_value(g, "rivers", "width", -1)
+    }
+    func legacyJSON(formatVersion: Int?, resolution: Int, width: Double) -> String {
+        let versionLine = formatVersion.map { "\"formatVersion\": \($0)," } ?? ""
+        return """
+        {
+          \(versionLine)
+          "resolution": { "width": \(resolution), "height": \(resolution) },
+          "sink": "rivers",
+          "nodes": [
+            { "id": "p", "type": "perlin", "params": {} },
+            { "id": "rivers", "type": "river", "params": { "width": \(width) } }
+          ],
+          "connections": [ { "from": "p", "to": "rivers", "input": 0 } ]
+        }
+        """
+    }
+
+    // terrainSize defaults to 1024, so cell = 1024/(N-1).
+    let at512 = riverWidth(legacyJSON(formatVersion: 2, resolution: 512, width: 2.0))
+    h.expect(abs(at512 - 2.0 * 1024.0 / 511.0) < 1e-9,
+             "v2 river width should convert at the document resolution: \(at512)")
+
+    let at256 = riverWidth(legacyJSON(formatVersion: 2, resolution: 256, width: 2.0))
+    h.expect(abs(at256 - 2.0 * 1024.0 / 255.0) < 1e-9,
+             "a 256 document should convert against its own grid: \(at256)")
+
+    // A document with no formatVersion is v1, so it migrates too.
+    let v1 = riverWidth(legacyJSON(formatVersion: nil, resolution: 512, width: 2.0))
+    h.expect(abs(v1 - 2.0 * 1024.0 / 511.0) < 1e-9,
+             "an unversioned document should migrate as v1: \(v1)")
+
+    // v3 already stores world units and must be left alone.
+    let v3 = riverWidth(legacyJSON(formatVersion: 3, resolution: 512, width: 4.0))
+    h.expect(v3 == 4.0, "a v3 river width must not be migrated again: \(v3)")
+
+    // Migrating twice would compound the conversion, so a saved-and-reloaded
+    // document must be stable.
+    guard let g = theia.graph_create() else { h.expect(false, "create"); return }
+    defer { theia.graph_destroy(g) }
+    h.expect(theia.graph_load_json_text(
+        g, legacyJSON(formatVersion: 2, resolution: 512, width: 2.0)),
+             "load for round-trip: \(graphError(g))")
+    let savedPath = NSTemporaryDirectory() + "theia-river-migration-\(UUID()).json"
+    defer { try? FileManager.default.removeItem(atPath: savedPath) }
+    h.expect(theia.graph_save_json_file(g, savedPath),
+             "save for round-trip: \(graphError(g))")
+    guard let saved = try? String(contentsOfFile: savedPath, encoding: .utf8) else {
+        h.expect(false, "could not read the saved graph back")
+        return
+    }
+    let reloaded = riverWidth(saved)
+    h.expect(abs(reloaded - at512) < 1e-9,
+             "saving and reloading must not migrate a second time: \(reloaded)")
+}
+
 h.test("Slope depends only on the vertical-to-horizontal ratio") {
     // GDAL's -scale is the ratio of vertical to horizontal units, so scaling
     // both by the same factor must leave the emitted angle untouched.
@@ -2761,7 +2873,7 @@ h.test("Graph format v1 migrates through v2 with default ports and output-scoped
         h.expect(false, "saved v2 JSON did not parse")
         return
     }
-    h.expect(root["formatVersion"] as? Int == 2, "formatVersion should be 2")
+    h.expect(root["formatVersion"] as? Int == 3, "formatVersion should be 3")
     h.expect(root["sinkOutput"] as? String == "mask", "migrated sinkOutput")
     let edges = root["connections"] as? [[String: Any]] ?? []
     h.expect(edges.first?["output"] as? String == "terrain",
@@ -2800,8 +2912,8 @@ h.test("Legacy graph format v3 loads and normalizes to v2") {
         h.expect(false, "migrated v3 JSON did not parse")
         return
     }
-    h.expect(root["formatVersion"] as? Int == 2,
-             "v3 input should normalize to formatVersion 2")
+    h.expect(root["formatVersion"] as? Int == 3,
+             "v3 input should round-trip as formatVersion 3")
     h.expect(root["sinkOutput"] as? String == "terrain",
              "legacy height sink should normalize to terrain")
     h.expect(root["retiredExtension"] == nil,
@@ -3137,13 +3249,17 @@ h.test("Particle hydrology and river nodes are registered and expose defaults") 
     }
 
     h.expect(theia.graph_node_type_input_count("river") == 1, "river input count")
-    h.expect(theia.graph_default_param_count("river") == 4, "river default count")
+    h.expect(theia.graph_default_param_count("river") == 5, "river default count")
     h.expect(theia.graph_default_param_value("river", "seed", -1) == 1337,
              "river seed default")
     h.expect(theia.graph_default_param_value("river", "water", -1) == 0.65,
              "river water default")
-    h.expect(theia.graph_default_param_value("river", "width", -1) == 2.0,
+    // World units, not cells: 4.0 reproduces the cell-based 2.0 tuned at the
+    // old 512 default grid. See terrain-horizontal-scale-notes.md.
+    h.expect(theia.graph_default_param_value("river", "width", -1) == 4.0,
              "river width default")
+    h.expect(theia.graph_default_param_value("river", "terrainSize", -1) == 1024.0,
+             "river terrainSize default")
     h.expect(theia.graph_default_param_value("river", "headwaters", -1) == 32,
              "river headwaters default")
     for removed in ["depth", "downcutting", "renderSurface", "riverValleyWidth"] {
@@ -3895,3 +4011,4 @@ h.test("Fluvial rejects non-finite parameters") {
 
 print("\n\(h.checks) checks, \(h.failures) failure(s)")
 exit(h.failures == 0 ? 0 : 1)
+

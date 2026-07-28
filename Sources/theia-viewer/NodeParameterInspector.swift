@@ -1194,7 +1194,10 @@ struct SliderConfig {
             return SliderConfig(range: 0...0.4, step: 0.005, precision: 3)
         case "width":
             if param.nodeType == "river" {
-                return SliderConfig(range: 0.25...16, step: 0.25, precision: 2)
+                // World units, matching the core clamp, not cells. The old
+                // 0.25...16 range was a cell count; see
+                // docs/research/terrain-horizontal-scale-notes.md.
+                return SliderConfig(range: 0.5...64, step: 0.5, precision: 2)
             }
             return SliderConfig(range: 0...16, step: 0.25, precision: 2)
         case "strength":

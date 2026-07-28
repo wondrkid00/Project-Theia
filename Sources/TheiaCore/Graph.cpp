@@ -40,6 +40,24 @@ void migrateLegacyCellSize(Node& n, std::uint32_t documentWidth) {
     n.params.set("terrainSize", cellSize * intervals);
 }
 
+// `river.width` moved from cells to world units in formatVersion 3. Unlike the
+// `cellSize` migration there is no removed key to detect, because `width`
+// exists in both schemas — the document's formatVersion is the signal.
+void migrateLegacyRiverWidth(Node& n, std::uint32_t documentWidth,
+                             std::uint32_t formatVersion) {
+    if (formatVersion >= 3) return;
+    if (n.type() != "river") return;
+    const double terrainSize = n.params.get("terrainSize", 1024.0);
+    auto legacy = n.params.values.find("width");
+    if (legacy == n.params.values.end()) return;
+    const double widthCells = legacy->second;
+    // An unusable authored width falls back to the node default rather than
+    // propagating a degenerate channel into the mask.
+    if (!std::isfinite(widthCells) || widthCells <= 0.0) return;
+    const double intervals = std::max(1u, documentWidth - 1);
+    n.params.set("width", widthCells * terrainSize / intervals);
+}
+
 void migrateLegacySlopeMaskDefaults(Node& n) {
     if (n.type() != "slopemask") return;
     const double low = n.params.get("low", 15.0);
@@ -571,7 +589,7 @@ void Graph::setDefaults(const std::string& sink, std::uint32_t w, std::uint32_t 
 
 std::string Graph::toJSON() const {
     json j;
-    j["formatVersion"] = 2;
+    j["formatVersion"] = 3;
     j["resolution"] = {{"width", defaultWidth_}, {"height", defaultHeight_}};
     if (!defaultSink_.empty()) {
         j["sink"] = defaultSink_;
@@ -757,6 +775,7 @@ bool Graph::fromJSON(const std::string& text, std::string& error) {
                 }
             }
             migrateLegacyCellSize(*n, next.defaultWidth_);
+            migrateLegacyRiverWidth(*n, next.defaultWidth_, formatVersion);
             migrateLegacySlopeMaskDefaults(*n);
         }
     }

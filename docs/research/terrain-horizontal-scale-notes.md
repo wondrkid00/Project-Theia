@@ -195,6 +195,78 @@ clamped to `[1, 65536]` before the division. The audited stability tests pass
 unchanged under this change, because migration reproduces each document's prior
 cell exactly at its own declared resolution.
 
+## Effect on the river mask (added 2026-07-28)
+
+`river` declared its `width` parameter as "visible channel width in cells" and
+used it directly for both the splat radius and the mask's softening blur:
+
+```
+baseRadius = max(0.75, width * (0.50 + 0.18 * water))
+mask       = boxBlur(mask, ceil(width * 0.75), passes = 3)
+```
+
+A channel is a **world-space** feature — a river is some number of metres wide,
+not some number of texels wide — so a radius fixed in cells makes the rendered
+width inversely proportional to resolution. Measured coverage (mean mask value,
+which for a path of fixed length is proportional to its width) at a fixed
+`terrainSize`:
+
+| grid | coverage (before) |
+|---|---|
+| 256 | 0.0435 |
+| 512 | 0.0199 |
+| 1024 | 0.0101 |
+
+Coverage halves for every doubling of the grid, i.e. exactly `1/resolution`.
+The artist-facing consequence is that a graph tuned in a 1024 preview and
+exported at 4096 produces rivers a quarter of the intended width, with nothing
+in the UI to indicate it.
+
+The fix applies this note's existing contract unchanged: `river` gains the same
+`terrainSize` parameter as `slopemask`, `thermal`, `hydraulic`, and `fluvial`,
+`width` is reinterpreted as a world length, and the cell radius is derived:
+
+```
+cell        = terrainSize / max(documentWidth - 1, 1)
+widthCells  = clamp(width / cell, 0.5, 64)
+```
+
+No new physics is introduced and no equation changes: this is the same
+vertical-to-horizontal units contract already established above for the slope
+estimator, applied to a geometric feature width.
+
+### Choice of default
+
+The previous default was `width = 2.0` cells, tuned when new documents defaulted
+to 512². At that grid with the default `terrainSize = 1024`, `cell = 1024/511 ≈
+2.004`, so the tuned appearance corresponds to **≈ 4.0 world units**. The new
+default is therefore `width = 4.0`, which reproduces the tuned look at 512² and
+now holds it at every other resolution instead of thinning.
+
+### Legacy migration
+
+`width` exists in both the old and new schema, so its presence cannot signal a
+legacy document the way a removed `cellSize` key could. The document's
+`formatVersion` is used instead: the loader already parses it ahead of the node
+list and accepts 1–3, so the writer moves to 3 and documents below 3 are
+migrated at their own declared resolution:
+
+```
+width_world = width_cells * terrainSize / max(documentWidth - 1, 1)
+```
+
+As with the `cellSize` migration, this reproduces each legacy document exactly
+at its own declared grid while making every other grid agree with it.
+
+### Cost
+
+The blur radius now grows with resolution, which is the correct behaviour for a
+world-space feature but does make the mask more expensive on fine grids: the
+separable box blur is `O(n · radius)` per pass. At the default width and
+`terrainSize`, radius is 3 cells at 1024² and 12 cells at 4096². The derived
+cell width is clamped to 64 to bound the worst case; above that the channel
+saturates rather than growing without limit.
+
 ## Boundary conditions and failure policy
 
 - `terrainSize` must be finite and strictly positive; non-finite or

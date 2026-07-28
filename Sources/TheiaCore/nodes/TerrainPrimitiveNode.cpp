@@ -172,11 +172,17 @@ bool evaluateCanyon(GPUContext& ctx, const TerrainPrimitiveNode& node,
         return false;
     }
 
-    // RiverNode and RiverCarveNode expose widths in cells. Evaluate their
-    // unchanged behavior at one fixed longest-axis resolution so those cell
-    // controls represent the same fraction of the domain at every requested
-    // output size. Derive the short side from sample intervals, not sample
-    // counts, and clamp it to the routing minimum for extreme aspect ratios.
+    // RiverCarveNode exposes its widths in cells, and canyon's own channel
+    // tuning is expressed in cells too. Evaluate at one fixed longest-axis
+    // resolution so those cell controls represent the same fraction of the
+    // domain at every requested output size. Derive the short side from sample
+    // intervals, not sample counts, and clamp it to the routing minimum for
+    // extreme aspect ratios.
+    //
+    // RiverNode's own `width` is now a world length rather than a cell count
+    // (see docs/research/terrain-horizontal-scale-notes.md), so the cell figure
+    // below is converted through this internal grid's spacing before being
+    // handed over. Canyon's carved network is unchanged by that move.
     constexpr std::uint32_t kInternalLongest = 256;
     std::uint32_t internalWidth = kInternalLongest;
     std::uint32_t internalHeight = kInternalLongest;
@@ -221,8 +227,13 @@ bool evaluateCanyon(GPUContext& ctx, const TerrainPrimitiveNode& node,
     RiverNode river(node.id() + ":river");
     river.params.set("seed", double(gpu.seed));
     river.params.set("water", std::clamp(double(branches / 32.0f), 0.0, 1.0));
+    // Canyon's channel width is authored in cells of the internal grid; convert
+    // to the world length RiverNode now expects, using that grid's spacing.
+    const double riverTerrainSize = river.params.get("terrainSize", 1024.0);
+    const double internalIntervals = double(std::max(1u, internalWidth - 1u));
+    const double channelCells = std::clamp(0.5 + 12.5 * double(width), 0.5, 8.0);
     river.params.set("width",
-                     std::clamp(0.5 + 12.5 * double(width), 0.5, 8.0));
+                     channelCells * riverTerrainSize / internalIntervals);
     river.params.set("headwaters", double(branches));
     std::vector<const Heightfield*> riverInputs{&base};
     if (!river.evaluate(ctx, riverInputs, mask, error)) {

@@ -343,7 +343,7 @@ struct GraphDocument: Codable {
         case formatVersion, resolution, sink, sinkOutput, nodes, connections, ui
     }
 
-    init(formatVersion: Int = 2,
+    init(formatVersion: Int = 3,
          resolution: GraphResolution,
          sink: String,
          sinkOutput: String = "",
@@ -380,7 +380,7 @@ struct GraphDocument: Codable {
 
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
-        try c.encode(2, forKey: .formatVersion)
+        try c.encode(3, forKey: .formatVersion)
         try c.encode(resolution, forKey: .resolution)
         if !sink.isEmpty {
             try c.encode(sink, forKey: .sink)
@@ -409,7 +409,7 @@ struct GraphDocument: Codable {
 
     static func emptyDocument(width: UInt32 = defaultResolution,
                               height: UInt32 = defaultResolution) -> GraphDocument {
-        GraphDocument(formatVersion: 2,
+        GraphDocument(formatVersion: 3,
                       resolution: GraphResolution(width: width, height: height),
                       sink: "",
                       sinkOutput: "",

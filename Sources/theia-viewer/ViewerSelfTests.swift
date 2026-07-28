@@ -529,8 +529,8 @@ func runViewerSelfTests() -> Int32 {
         let encoded = try migrated.encodedString()
         let root = try JSONSerialization.jsonObject(
             with: Data(encoded.utf8)) as? [String: Any]
-        expect(root?["formatVersion"] as? Int == 2,
-               "v3 input should normalize to formatVersion 2")
+        expect(root?["formatVersion"] as? Int == 3,
+               "documents should round-trip as formatVersion 3")
         expect(root?["sinkOutput"] as? String == "terrain",
                "legacy height sink should normalize to terrain")
         let connections = root?["connections"] as? [[String: Any]]
