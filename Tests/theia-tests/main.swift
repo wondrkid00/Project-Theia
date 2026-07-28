@@ -1693,9 +1693,10 @@ let terrainPrimitiveDefaults: [(type: String, params: [(String, Double)])] = [
         ("arc", 0.35), ("sinuosity", 0.45), ("seed", 1337)
     ]),
     ("volcano", [
-        ("scale", 0.55), ("height", 0.90), ("mouth", 0.22),
-        ("calderaDepth", 0.45), ("bulk", 0.60), ("radialErosion", 0.35),
-        ("roughness", 0.30), ("x", 0), ("y", 0), ("seed", 1337)
+        ("scale", 0.96), ("height", 1.00), ("mouth", 0.66),
+        ("calderaDepth", 0.57), ("bulk", 0.70), ("radialErosion", 0.45),
+        ("roughness", 0.25), ("x", 0), ("y", 0),
+        ("surroundings", 0.45), ("seed", 1337)
     ])
 ]
 
@@ -1918,6 +1919,8 @@ h.test("Terrain primitive parameter families clamp at their public limits") {
         ("mountainrange", "peaks", 12, 100),
         ("mountainrange", "arc", -1, -10),
         ("mountainrange", "arc", 1, 10),
+        ("volcano", "surroundings", 0, -10),
+        ("volcano", "surroundings", 1, 10),
         ("volcano", "seed", 0, -10),
         ("volcano", "seed", 9999, 100000)
     ]
@@ -2047,9 +2050,9 @@ h.test("Smooth radial primitives use independent width and height coordinates") 
     let width = 129
     let height = 65
     let cases = [
-        ("crater", "{ \"seed\": 1337, \"irregularity\": 0, \"ejecta\": 0 }"),
-        ("mountain", "{ \"seed\": 1337, \"roughness\": 0, \"warp\": 0 }"),
-        ("volcano", "{ \"seed\": 1337, \"roughness\": 0, \"radialErosion\": 0 }")
+        ("crater", "{ \"seed\": 1337, \"irregularity\": 0, \"ejecta\": 0, \"surroundings\": 0 }"),
+        ("mountain", "{ \"seed\": 1337, \"roughness\": 0, \"warp\": 0, \"surroundings\": 0 }"),
+        ("volcano", "{ \"seed\": 1337, \"roughness\": 0, \"radialErosion\": 0, \"surroundings\": 0 }")
     ]
     // Fractions of the normalized center-to-edge world distance. Fractional
     // positions exercise interpolation instead of relying on coincident pixels.
@@ -2158,13 +2161,13 @@ h.test("Rolling hills detail extends the surface spectrum") {
 }
 
 h.test("Landform primitives sit in terrain rather than on a flat plane") {
-    // mountain, mountainrange and crater all clipped their profile to exactly
+    // These landforms clipped their profile to exactly
     // zero outside the feature radius, so the surroundings measured 0.00000
     // relief -- the landform read as stamped onto a plane. `surroundings` adds
     // ground the feature grades into.
     let size = 128
     var flat: [String] = []
-    for type in ["mountain", "mountainrange", "crater"] {
+    for type in ["mountain", "mountainrange", "crater", "volcano"] {
         let field = evalGraphHeightsJSON(
             primitiveJSON(type, params: "{ \"seed\": 909 }", size: size),
             sink: "terrain", size: UInt32(size))
@@ -2186,9 +2189,10 @@ h.test("Landform primitives sit in terrain rather than on a flat plane") {
     // it off is compared RELATIVELY: the footslope skirt is deliberately still
     // present out there, since that belongs to the landform rather than to the
     // surrounding ground, so strict flatness is the wrong contract.
-    @MainActor func cornerRelief(_ surroundings: String) -> Float {
+    @MainActor func cornerRelief(_ type: String,
+                                 _ surroundings: String) -> Float {
         let field = evalGraphHeightsJSON(
-            primitiveJSON("mountain",
+            primitiveJSON(type,
                           params: "{ \"seed\": 909, \"surroundings\": \(surroundings) }",
                           size: size),
             sink: "terrain", size: UInt32(size))
@@ -2199,13 +2203,99 @@ h.test("Landform primitives sit in terrain rather than on a flat plane") {
         }
         return (corner.max() ?? 0) - (corner.min() ?? 0)
     }
-    let off = cornerRelief("0")
-    let on = cornerRelief("0.6")
-    h.expect(off >= 0 && on >= 0, "surroundings fixtures must evaluate")
-    // Measured ratio is ~3.6x; the bound leaves margin while still failing if
-    // the control is ignored. The residual at 0 is the footslope skirt.
-    h.expect(on > off * 2.5,
-             "surroundings should dominate corner relief: \(off) -> \(on)")
+    for type in ["mountain", "volcano"] {
+        let off = cornerRelief(type, "0")
+        let on = cornerRelief(type, "0.6")
+        h.expect(off >= 0 && on >= 0,
+                 "\(type) surroundings fixtures must evaluate")
+        if type == "volcano" {
+            // The reviewed scale 0.96 lets the continuous piedmont itself
+            // reach the corners; surroundings should add to that relief, not
+            // dominate it as it does for the smaller Mountain footprint.
+            h.expect(off > 0.002 && on > off * 1.05,
+                     "volcano surroundings should augment its broad piedmont: "
+                     + "\(off) -> \(on)")
+        } else {
+            h.expect(on > max(off * 2.5, 0.001),
+                     "\(type).surroundings should dominate corner relief: "
+                     + "\(off) -> \(on)")
+        }
+    }
+}
+
+h.test("Volcano piedmont carries texture smoothly past the cone radius") {
+    let size = 256
+    let scale = 0.96
+    let radius = 0.5 * scale
+    let field = evalGraphHeightsJSON(
+        primitiveJSON(
+            "volcano",
+            params: "{ \"seed\": 1337, \"surroundings\": 0 }",
+            size: size),
+        sink: "terrain", size: UInt32(size))
+    h.expect(field.count == size * size, "volcano seam fixture must evaluate")
+
+    @MainActor func ring(_ rho: Double) -> [Float] {
+        (0..<360).map { index in
+            let angle = Double(index) * 2.0 * Double.pi / 360.0
+            return bilinearSample(
+                field, width: size, height: size,
+                u: 0.5 + radius * rho * cos(angle),
+                v: 0.5 + radius * rho * sin(angle))
+        }
+    }
+    @MainActor func moments(_ samples: [Float]) -> (Double, Double) {
+        guard !samples.isEmpty else { return (0, 0) }
+        let mean = samples.reduce(0.0) { $0 + Double($1) }
+            / Double(samples.count)
+        let variance = samples.reduce(0.0) {
+            let delta = Double($1) - mean
+            return $0 + delta * delta
+        } / Double(samples.count)
+        return (mean, sqrt(variance))
+    }
+
+    let inner = moments(ring(0.90))
+    let edge = moments(ring(1.00))
+    let outer = moments(ring(1.15))
+    h.expect(outer.1 > max(inner.1 * 0.05, 1e-4),
+             "volcano texture stops at the cone radius: "
+             + "inner \(inner.1), outer \(outer.1)")
+    let radialKink = abs(inner.0 - 2.0 * edge.0 + outer.0)
+    h.expect(radialKink < 0.04,
+             "volcano retains a circular height seam: \(radialKink)")
+}
+
+h.test("Volcano erosion reuses the default Fluvial node") {
+    let size = 64
+    let integrated = evalGraphHeightsJSON(
+        primitiveJSON(
+            "volcano",
+            params: "{ \"seed\": 812, \"radialErosion\": 1 }",
+            size: size),
+        sink: "terrain", size: UInt32(size))
+    let composed = """
+    {
+      "resolution": { "width": \(size), "height": \(size) },
+      "sink": "eroded",
+      "nodes": [
+        {
+          "id": "volcano",
+          "type": "volcano",
+          "params": { "seed": 812, "radialErosion": 0 }
+        },
+        { "id": "eroded", "type": "fluvial", "params": {} }
+      ],
+      "connections": [
+        { "from": "volcano", "to": "eroded", "input": 0 }
+      ]
+    }
+    """
+    let standalone = evalGraphHeightsJSON(
+        composed, sink: "eroded", size: UInt32(size))
+        .map { min(1, max(0, $0)) }
+    h.expect(integrated == standalone,
+             "volcano radialErosion=1 must equal its base through default Fluvial")
 }
 
 h.test("Crater and mountain range avoid radial and crease artifacts") {

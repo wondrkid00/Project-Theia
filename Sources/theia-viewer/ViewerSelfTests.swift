@@ -191,6 +191,7 @@ func runViewerSelfTests() -> Int32 {
             ("mountain", "surroundings", 0.30),
             ("mountainrange", "peakVariation", 0.65),
             ("mountainrange", "sinuosity", 0.45),
+            ("volcano", "surroundings", 0.45),
         ] {
             expect(terrainConfig(type, parameter, value).range == 0...1,
                    "\(type).\(parameter) must match the core 0...1 range")

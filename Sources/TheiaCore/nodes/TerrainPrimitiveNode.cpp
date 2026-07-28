@@ -11,6 +11,7 @@
 #include "GPUContext.hpp"
 #include "Heightfield.hpp"
 #include "kernels/TerrainPrimitives.metal.hpp"
+#include "nodes/FluvialNode.hpp"
 #include "nodes/RiverCarveNode.hpp"
 #include "nodes/RiverNode.hpp"
 
@@ -59,11 +60,12 @@ constexpr P kMountainRange[] = {
     {"seed",1337,0,9999,true},
 };
 constexpr P kVolcano[] = {
-    {"scale",0.55,0.05,1.5,false}, {"height",0.90,0,1,false},
-    {"mouth",0.22,0,1,false}, {"calderaDepth",0.45,0,1,false},
-    {"bulk",0.60,0,1,false}, {"radialErosion",0.35,0,1,false},
-    {"roughness",0.30,0,1,false}, {"x",0,-1,1,false},
-    {"y",0,-1,1,false}, {"seed",1337,0,9999,true},
+    {"scale",0.96,0.05,1.5,false}, {"height",1.00,0,1,false},
+    {"mouth",0.66,0,1,false}, {"calderaDepth",0.57,0,1,false},
+    {"bulk",0.70,0,1,false}, {"radialErosion",0.45,0,1,false},
+    {"roughness",0.25,0,1,false}, {"x",0,-1,1,false},
+    {"y",0,-1,1,false}, {"surroundings",0.45,0,1,false},
+    {"seed",1337,0,9999,true},
 };
 
 template <std::size_t N>
@@ -289,6 +291,53 @@ bool evaluateCanyon(GPUContext& ctx, const TerrainPrimitiveNode& node,
     return true;
 }
 
+bool evaluateVolcano(GPUContext& ctx, const TerrainPrimitiveNode& node,
+                     const TerrainPrimitiveDescriptor& d,
+                     const PrimitiveParamsGPU& gpu,
+                     Heightfield& out, std::string& error) {
+    const float erosionAmount = gpu.values[5];
+    if (erosionAmount <= 0.0f) {
+        return dispatchPrimitive(ctx, d, gpu, out, error);
+    }
+
+    Heightfield base(ctx, out.width(), out.height());
+    if (!base.valid()) {
+        error = "volcano '" + node.id() +
+                "': temporary terrain allocation failed";
+        return false;
+    }
+    if (!dispatchPrimitive(ctx, d, gpu, base, error)) {
+        error = "volcano '" + node.id() + "' base: " + error;
+        return false;
+    }
+
+    // Reuse the exact default drainage-area-driven landscape evolution
+    // implementation exposed by the Fluvial node. The public 0...1 control is
+    // the blend amount against that result; zero remains an exact analytic
+    // Volcano bypass and one matches a standalone default Fluvial pass.
+    FluvialNode fluvial(node.id() + ":fluvial");
+    std::vector<const Heightfield*> fluvialInputs{&base};
+    if (!fluvial.evaluate(ctx, fluvialInputs, out, error)) {
+        error = "volcano '" + node.id() + "' fluvial erosion: " + error;
+        return false;
+    }
+
+    for (std::size_t i = 0; i < out.count(); ++i) {
+        const float eroded = out.data()[i];
+        if (!std::isfinite(eroded)) {
+            error = "volcano '" + node.id() +
+                    "': fluvial erosion produced non-finite terrain";
+            return false;
+        }
+        const float boundedErosion = std::clamp(eroded, 0.0f, 1.0f);
+        out.data()[i] = std::clamp(
+            base.data()[i] * (1.0f - erosionAmount) +
+                boundedErosion * erosionAmount,
+            0.0f, 1.0f);
+    }
+    return true;
+}
+
 } // namespace
 
 const TerrainPrimitiveDescriptor* terrainPrimitiveDescriptor(
@@ -334,6 +383,9 @@ bool TerrainPrimitiveNode::evaluate(
     }
     if (descriptor_->kind == 1) {
         return evaluateCanyon(ctx, *this, *descriptor_, gpu, out, error);
+    }
+    if (descriptor_->kind == 10) {
+        return evaluateVolcano(ctx, *this, *descriptor_, gpu, out, error);
     }
     return dispatchPrimitive(ctx, *descriptor_, gpu, out, error);
 }

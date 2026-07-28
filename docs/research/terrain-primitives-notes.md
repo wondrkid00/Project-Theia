@@ -14,19 +14,19 @@ unknown-node diagnostic. The independent `erosionfilter.ridge` analysis output
 is unaffected.
 
 This note authorizes only scalar heightfield generation, including Canyon's
-specific hybrid composition of a Metal upland base with the already-audited
-deterministic River/RiverCarve path. It does not authorize erosion changes, new
-hydrology, stratigraphy, material masks, multi-field graph outputs, tectonic
-simulation, any other CPU primitive/fallback path, or UI implementation.
+specific hybrid composition with the already-audited deterministic
+River/RiverCarve path and Volcano's composition with the existing default
+Fluvial node. It does not authorize changes to those erosion implementations,
+new hydrology, stratigraphy, material masks, multi-field graph outputs,
+tectonic simulation, any CPU primitive/fallback path, or UI implementation.
 
 ## Decision summary
 
 - Every accepted primitive is a zero-input generator with one finite normalized
   heightfield output in `[0,1]`. Analytic fields execute in 2D Metal kernels.
-  `canyon` is the deliberate hybrid exception: Metal generates its upland base,
-  then the node reuses Theia's already-audited deterministic `RiverNode` /
-  `RiverCarveNode` routing and carving path (or shared functions extracted
-  without changing their equations).
+  `canyon` and `volcano` are deliberate hybrid exceptions. Canyon reuses the
+  deterministic `RiverNode` / `RiverCarveNode` path; Volcano blends its
+  analytic base against an unmodified default `FluvialNode` evaluation.
 - All new analytic stochastic choices come from the exact unsigned 32-bit hash
   specified below. There is no mutable RNG state, thread-order dependence,
   atomic scatter, permutation texture, or host-language random source.
@@ -36,12 +36,11 @@ simulation, any other CPU primitive/fallback path, or UI implementation.
   distance constructions, and analytic domain warping. These constructs are
   independently implemented from the publications below; no third-party source
   code is copied.
-- `canyon` is the only drainage-aware primitive. It generates a broad base
-  surface, then reuses the connected route and bounded carve behavior already
-  implemented by `RiverNode` and `RiverCarveNode`, whose depression
-  conditioning and drainage basis is documented in
-  `metal-and-hydrology-notes.md` and the approved fluvial research. It does not
-  introduce a second hydrology formulation.
+- `canyon` reuses connected route and bounded carve behavior from `RiverNode`
+  and `RiverCarveNode`. Volcano's erosion control reuses `FluvialNode`
+  wholesale. Their drainage bases are documented in
+  `metal-and-hydrology-notes.md` and the approved fluvial research; neither
+  primitive introduces a second hydrology formulation.
 - Craters are morphology-inspired procedural approximations. Their parameters
   are normalized authoring controls, not claims of planetary age, impact
   energy, or geological time.
@@ -313,9 +312,9 @@ prove equivalence with the executable fixtures below.
 
 The node does **not** apply stream-power incision, sediment deposition,
 diffusion, or iterative landscape evolution. This keeps it a bounded primitive
-and avoids duplicating `fluvial`. The hybrid is permitted even though the other
-five primitives are one-pass Metal analytics: connected routes are more
-important than pretending an arbitrary noise groove is a canyon.
+and avoids duplicating `fluvial`. The hybrid is permitted because connected
+routes are more important than pretending an arbitrary noise groove is a
+canyon.
 
 ## Exact node and parameter mapping
 
@@ -338,7 +337,7 @@ validation.
 | `crater` | `scale=0.45`, `height=0.80`, `depth=0.26`, `rimHeight=0.14`, `rimWidth=0.18`, `irregularity=0.45`, `ejecta=0.35`, `x=0`, `y=0`, `complexity=0.30`, `terraces=0.50`, `surroundings=0.30`, `seed=1337` |
 | `mountain` | `scale=0.65`, `height=0.90`, `bulk=0.58`, `roughness=0.38`, `warp=0.20`, `x=0`, `y=0`, `surroundings=0.30`, `seed=1337` |
 | `mountainrange` | `scale=0.70`, `height=0.90`, `length=1.25`, `width=0.24`, `direction=25`, `peaks=5`, `roughness=0.40`, `warp=0.25`, `x=0`, `y=0`, `surroundings=0.30`, `peakVariation=0.65`, `arc=0.35`, `sinuosity=0.45`, `seed=1337` |
-| `volcano` | `scale=0.55`, `height=0.90`, `mouth=0.22`, `calderaDepth=0.45`, `bulk=0.60`, `radialErosion=0.35`, `roughness=0.30`, `x=0`, `y=0`, `seed=1337` |
+| `volcano` | `scale=0.96`, `height=1.00`, `mouth=0.66`, `calderaDepth=0.57`, `bulk=0.70`, `radialErosion=0.45`, `roughness=0.25`, `x=0`, `y=0`, `surroundings=0.45`, `seed=1337` |
 
 `perlin` retains its current exact public mapping and defaults:
 `seed=1337`, `octaves=6`, `frequency=4`, `lacunarity=2`, `gain=0.5`,
@@ -364,8 +363,12 @@ but each active primitive follows these stable construction rules:
   `direction`, `arc` and `sinuosity`. Deterministically varied summit lobes are
   combined with a smooth probabilistic union; `surroundings` supplies low
   relief outside the range.
-- `volcano` combines a scale-relative cone or shield, a bounded caldera and
-  cartesian-sampled radial gullies. The final result is finite and saturated.
+- `volcano` combines a scale-relative cone or shield, a bounded caldera,
+  a decaying piedmont, and low surrounding relief. Cone and piedmont form one
+  rational falloff with no radius cutoff and shared roughness. `radialErosion`
+  blends against the same default drainage-area-driven `FluvialNode`
+  implementation used by the public Fluvial node; the analytic Volcano shader
+  does not generate a second groove field.
 
 ## Boundary and failure policy
 
@@ -409,12 +412,13 @@ are descriptive; they may be integrated into `Tests/theia-tests/main.swift`.
 | No data-dependent normalization | Evaluating a crop and the corresponding region of a larger domain with identical world coordinates gives the same unsaturated primitive values within `1e-6`. |
 | Crater landmarks | With `complexity=0`, `surroundings=0`, `irregularity=0`, and `ejecta=0`, the `x,y`-derived center lies below the rim, the rim maximum is near radius `0.35*scale`, and radial error is bounded on a non-square grid. |
 | Volcano structure | The `x,y`-derived center is below an annulus inside mouth radius `0.5*scale*mix(0.03,0.45,mouth)`; the cone declines monotonically when `radialErosion=0` and `roughness=0`. |
+| Volcano Fluvial reuse | `radialErosion=1` is elementwise equal to the same analytic Volcano base with `radialErosion=0` connected to a default `fluvial` node, after the primitive's required `[0,1]` clamp. |
 | Canyon routing | Conditioned routing has no interior sink and every interior cell has a strictly descending route to an edge. |
 | Canyon drainage hierarchy | Accumulated area is positive, total routed area is conserved to the open boundary within solver tolerance, and its distribution is heavy-tailed rather than uniform. |
 | Canyon conditioning effect | At default settings, at least 90% of the deepest 10% carved samples overlap the highest 20% drainage-area samples; replacing area with unconditioned noise must fail this fixture. |
 | Canyon resolution scaling | Normalized area threshold produces channel coverage within 15% across 128², 256², and 512² on the same band-limited base. |
 | Failure policy | NaN/Inf for every exposed floating parameter fails with node and parameter name; `canyon` fails below `3x3`; finite out-of-range values clamp. |
-| Execution boundary | All analytic nodes and Canyon's upland base execute through Metal and reuse the pipeline cache. Canyon alone then exercises the existing deterministic River/RiverCarve path; disabling that path fails explicitly rather than substituting a new fallback. |
+| Execution boundary | Every analytic base executes through Metal and reuses the pipeline cache. Canyon then exercises the existing deterministic River/RiverCarve path; Volcano with nonzero `radialErosion` exercises the existing default Fluvial path. Either failure is explicit rather than replaced by a fallback. |
 
 Visual golden images may supplement these obligations but cannot replace the
 numeric tests.
@@ -444,6 +448,9 @@ numeric tests.
   one-pass analytic nodes. Its bounded 256-sample longest-axis working grid
   keeps that cost stable; requested higher resolutions resample the routed
   landform rather than adding new channel detail.
+- Volcano with nonzero `radialErosion` pays for a default Fluvial simulation at
+  the requested resolution. Setting the control to zero bypasses that pass
+  exactly.
 - Seamless tiling is not part of this gate. The continuous fields can be
   sampled across adjacent domains if a future graph adds world-origin
   parameters, but the present nodes expose one cropped unit domain.
@@ -494,7 +501,7 @@ failure mode is easy to reintroduce.
 
 ### A landform must not clip to zero at its own radius
 
-`mountain`, `mountainrange` and `crater` derived their profile from
+`mountain`, `mountainrange`, `crater`, and `volcano` derived their profile from
 `sat(1 - rho)` or an equivalent, which is exactly zero outside the feature
 radius. Measured corner relief on all three was **0.00000**: the landform read
 as a shape stamped onto a dead-flat plane, which is the most obviously synthetic
@@ -505,9 +512,11 @@ Two additions fix it, and they are separate concerns:
 - **`surroundings`** adds low-relief ground everywhere, which the landform then
   grades into. It is faded under the feature (`ground * (1 - 0.65 z)`) so it
   does not fight the summit.
-- A **footslope skirt**, `0.24 exp(-1.1 rho^2)`, extends a decaying piedmont
-  past the radius. This belongs to the landform, not the surroundings, and so
-  remains present at `surroundings = 0`.
+- A **footslope profile** extends a decaying piedmont past the nominal radius.
+  This belongs to the landform, not the surroundings, and so remains present at
+  `surroundings = 0`. Volcano applies roughness to the combined
+  cone-and-piedmont profile, then runs Fluvial erosion across the complete
+  heightfield so drainage is not constrained by a radial join.
 
 Roughness must multiply the landform term alone. Applied to the whole field it
 inherits the profile's zero and leaves the surrounding ground perfectly smooth.

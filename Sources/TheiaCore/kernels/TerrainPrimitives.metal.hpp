@@ -321,21 +321,32 @@ static inline float radialImpactValue(float2 p, constant PrimitiveParams& P) {
     }
     if (P.kind == 10u) { // volcano
         float scale=P.v[0], height=P.v[1], mouth=P.v[2];
-        float caldera=P.v[3], bulk=P.v[4], radial=P.v[5], rough=P.v[6];
+        float caldera=P.v[3], bulk=P.v[4], rough=P.v[6];
         float2 center=0.5f*float2(P.v[7],P.v[8]);
+        float surroundings=P.v[9];
         float radius=max(0.5f*scale,1.0e-5f);
         float2 d=p-center;
         float rho=length(d)/radius;
-        float cone=pow(sat(1.0f-rho),mix(2.5f,0.5f,bulk));
         float mouthRadius=radius*mix(0.03f,0.45f,mouth);
         float rm=length(d)/max(mouthRadius,1.0e-5f);
         float bowl=rm<1.0f ? caldera*pow(1.0f-rm*rm,2.0f) : 0.0f;
-        float angle=atan2(d.y,d.x);
-        float ravine=radial*sat(gradientNoise(float2(12.0f*angle,4.0f*rho),
-                                              P.seed^0xDB4F0B91u))
-                     *rho*sat(1.0f-rho);
-        float z=max(0.0f,cone*roughFactor(p,rough,P.seed)-bowl-ravine);
-        return sat(height*z);
+
+        // A rational falloff has no nominal edge: unlike sat(1-rho), neither
+        // height, slope, curvature, nor texture changes formula at rho=1.
+        // `bulk` widens the shoulder and softens the far piedmont while the
+        // default retains the authored cone silhouette.
+        float shoulder=mix(0.36f,0.56f,bulk);
+        float falloff=mix(5.50f,2.40f,bulk);
+        float profile=1.0f/
+            (1.0f+pow(rho/max(shoulder,1.0e-4f),falloff));
+        float roughened=profile*roughFactor(p,rough,P.seed);
+
+        // Drainage-aware erosion is applied by the shared FluvialNode after
+        // this analytic base is generated. Do not carve a second procedural
+        // groove field here: it creates a different texture and a radial seam.
+        float z=sat(max(0.0f,roughened-bowl));
+        float ground=surroundingRelief(p,surroundings,scale,P.seed);
+        return sat(ground*(1.0f-0.70f*z)+height*z);
     }
     return 0.0f;
 }

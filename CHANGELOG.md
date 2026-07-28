@@ -4,6 +4,10 @@
 
 - Added deterministic terrain primitives for rolling hills, canyons, craters,
   mountains, mountain ranges, and volcanoes.
+- Blended Volcano into a continuous, shared-noise piedmont and low surrounding
+  relief, replacing its procedural radial grooves with the same
+  drainage-aware erosion used by the Fluvial node, and promoted the reviewed
+  broad-caldera settings to its defaults.
 - Retired the experimental `ridged`, `craterfield`, `plates`, `dunesea`,
   `mountainside`, `ridge`, `rugged`, `slump`, and `uplift` generators. Legacy
   graphs using those node types now fail with an explicit unknown-node

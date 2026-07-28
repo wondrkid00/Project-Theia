@@ -570,7 +570,8 @@ enum TerrainParameterCatalog {
         ],
         "volcano": [
             "scale", "height", "mouth", "calderaDepth",
-            "bulk", "radialErosion", "roughness", "x", "y", "seed",
+            "bulk", "radialErosion", "roughness", "surroundings",
+            "x", "y", "seed",
         ],
     ]
 
@@ -645,7 +646,7 @@ private struct ParameterPresentation {
             case "rimHeight": return "Rim Height"
             case "rimWidth": return "Rim Width"
             case "calderaDepth": return "Caldera Depth"
-            case "radialErosion": return "Radial Erosion"
+            case "radialErosion": return "Fluvial Erosion"
             case "peakVariation": return "Peak Variation"
             default: break
             }
@@ -739,7 +740,8 @@ private struct ParameterPresentation {
             case "detail": return "Adds finer structure to rolling hills."
             case "mouth": return "Sets the summit opening size."
             case "calderaDepth": return "Lowers the volcanic caldera."
-            case "radialErosion": return "Cuts channels away from the summit."
+            case "radialErosion":
+                return "Runs drainage-aware fluvial erosion across the volcano and its surroundings."
             case "x": return "Moves the landform center horizontally."
             case "y": return "Moves the landform center vertically."
             case "seed": return "Chooses a repeatable terrain variation."
