@@ -4,8 +4,9 @@ import SwiftUI
 import UniformTypeIdentifiers
 import simd
 
-private let topToolbarHeight: CGFloat = 68
-private let topToolbarDividerColor = Color.white.opacity(0.08)
+/// Header height for the side panels (inspector, graph column). Matches the
+/// unified title bar so the three columns line up along a single rule.
+private let panelHeaderHeight: CGFloat = 34
 
 struct TerrainViewport: NSViewRepresentable {
     let view: TerrainMTKView
@@ -21,140 +22,37 @@ struct ContentView: View {
     let viewport: TerrainMTKView
 
     var body: some View {
-        ZStack(alignment: .bottomTrailing) {
+        VStack(spacing: 0) {
+            TheiaTitleBar(model: model, viewport: viewport)
+
+            // Gaea's arrangement: properties run the full height of the right
+            // edge, the viewport takes the top of the remaining area, and the
+            // graph spans the bottom beneath it.
             HSplitView {
                 VSplitView {
-                    ViewportSurface(model: model, viewport: viewport)
-                        .frame(minWidth: 560, minHeight: 360, idealHeight: 720)
-                        .layoutPriority(3)
+                    ZStack(alignment: .bottomTrailing) {
+                        ViewportSurface(model: model, viewport: viewport)
 
-                    AuthoringDock(model: model, viewport: viewport)
-                        .frame(minWidth: 560, minHeight: 378, idealHeight: 420)
-                        .layoutPriority(1)
+                        StatusBadge(model: model)
+                            .padding(.trailing, 14)
+                            .padding(.bottom, 12)
+                    }
+                    .frame(minHeight: 260, idealHeight: 640)
+                    // The viewport absorbs spare height, so the graph settles at
+                    // its minimum and the split opens near Gaea's ~60/40. The
+                    // user can still drag the divider to grow the graph.
+                    .layoutPriority(1)
+
+                    GraphColumn(model: model, viewport: viewport)
+                        .frame(minHeight: 400, idealHeight: 440)
                 }
-                .frame(minWidth: 560, minHeight: 680)
+                .frame(minWidth: 620)
 
                 InspectorPanel(model: model, viewport: viewport)
-                    .frame(minWidth: 340, idealWidth: 400, maxWidth: 460)
+                    .frame(minWidth: 300, idealWidth: 380, maxWidth: 460)
             }
-
-            StatusBadge(model: model)
-                .padding(.trailing, 14)
-                .padding(.bottom, 12)
         }
-    }
-}
-
-private enum AuthoringDockTab: String, CaseIterable {
-    case graph
-    case output
-
-    var title: String {
-        switch self {
-        case .graph: return "Graph"
-        case .output: return "Output"
-        }
-    }
-
-    var systemImage: String {
-        switch self {
-        case .graph: return "rectangle.connected.to.line.below"
-        case .output: return "text.bubble"
-        }
-    }
-}
-
-struct AuthoringDock: View {
-    @ObservedObject var model: TerrainModel
-    let viewport: TerrainMTKView
-    @State private var selectedTab: AuthoringDockTab = .graph
-    private let uiSpring = Animation.spring(response: 0.24, dampingFraction: 0.86)
-
-    var body: some View {
-        VStack(spacing: 0) {
-            ZStack {
-                switch selectedTab {
-                case .graph:
-                    NodeEditorCanvas(model: model, viewport: viewport)
-                        .transition(.opacity.combined(with: .scale(scale: 0.995, anchor: .bottom)))
-                case .output:
-                    GraphOutputPanel(model: model, viewport: viewport)
-                        .transition(.opacity.combined(with: .move(edge: .bottom)))
-                }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .clipped()
-            .animation(uiSpring, value: selectedTab)
-
-            dockTabBar
-        }
-        .background(Color(nsColor: .underPageBackgroundColor))
-        .overlay(alignment: .top) {
-            Rectangle()
-                .fill(Color.white.opacity(0.08))
-                .frame(height: 1)
-        }
-    }
-
-    private var dockTabBar: some View {
-        HStack(spacing: 6) {
-            ForEach(AuthoringDockTab.allCases, id: \.self) { tab in
-                Button {
-                    withAnimation(uiSpring) {
-                        selectedTab = tab
-                    }
-                } label: {
-                    HStack(spacing: 7) {
-                        Image(systemName: tab.systemImage)
-                            .font(.system(size: 12, weight: .semibold))
-                        Text(tab.title)
-                            .font(.system(size: 12, weight: .semibold))
-                        if tab == .output {
-                            outputBadge
-                        }
-                    }
-                    .padding(.horizontal, 10)
-                    .frame(height: 30)
-                    .foregroundStyle(selectedTab == tab ? .primary : .secondary)
-                    .background(selectedTab == tab
-                                ? Color.white.opacity(0.10)
-                                : Color.clear,
-                                in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-                    .contentShape(Rectangle())
-                    .scaleEffect(selectedTab == tab ? 1.0 : 0.98)
-                    .animation(.easeOut(duration: 0.14), value: selectedTab)
-                }
-                .buttonStyle(.plain)
-            }
-
-            Spacer()
-        }
-        .padding(.horizontal, 8)
-        .frame(height: 38)
-        .background(Color(nsColor: .controlBackgroundColor))
-        .overlay(alignment: .top) {
-            Rectangle()
-                .fill(Color.white.opacity(0.08))
-                .frame(height: 1)
-        }
-    }
-
-    @ViewBuilder
-    private var outputBadge: some View {
-        let errors = model.diagnostics.authoringErrorCount
-        let warnings = model.diagnostics.authoringWarningCount
-        if errors > 0 || warnings > 0 {
-            Text("\(errors + warnings)")
-                .font(.system(size: 10, weight: .bold))
-                .foregroundStyle(errors > 0 ? .red : .orange)
-                .padding(.horizontal, 5)
-                .frame(height: 16)
-                .background((errors > 0 ? Color.red : Color.orange).opacity(0.14),
-                            in: Capsule(style: .continuous))
-                .transition(.scale.combined(with: .opacity))
-                .animation(.spring(response: 0.22, dampingFraction: 0.78),
-                           value: errors + warnings)
-        }
+        .ignoresSafeArea(.container, edges: .top)
     }
 }
 
@@ -169,19 +67,14 @@ struct ViewportSurface: View {
             TerrainViewport(view: viewport)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-            VStack(spacing: 0) {
-                viewportToolbar
-                Spacer()
-            }
-
             floatingViewportMenus
-                .padding(.top, topToolbarHeight + 10)
+                .padding(.top, 10)
                 .padding(.leading, 12)
 
             AxisGizmo(model: model, cameraSignal: model.cameraSignal,
                       viewport: viewport)
                 .frame(width: 76, height: 76)
-                .padding(.top, topToolbarHeight + 8)
+                .padding(.top, 8)
                 .padding(.trailing, 14)
                 .frame(maxWidth: .infinity, maxHeight: .infinity,
                        alignment: .topTrailing)
@@ -333,159 +226,6 @@ struct ViewportSurface: View {
         .onHover { setToolbarHint("Viewport settings", hovering: $0) }
     }
 
-    private var viewportToolbar: some View {
-        HStack(alignment: .top, spacing: 8) {
-            toolbarGroup("File") {
-                viewportButton(systemImage: "folder",
-                               title: "Load",
-                               help: "Load graph") {
-                    openDocument()
-                    redraw()
-                }
-                viewportButton(title: "Save",
-                               help: "Save graph",
-                               action: {
-                    saveDocument()
-                    redraw()
-                }) {
-                    FloppyDiskIcon()
-                }
-            }
-
-            toolbarDivider
-
-            toolbarGroup("Camera") {
-                viewportButton(systemImage: "viewfinder",
-                               title: "Reset",
-                               help: "Reset camera (F)") {
-                    model.resetCamera()
-                    redraw()
-                }
-                viewportButton(systemImage: "arrow.triangle.2.circlepath",
-                               title: "Orbit",
-                               help: "Orbit tool (O): left drag orbits the camera.",
-                               active: model.viewportTool == .orbit) {
-                    model.setViewportTool(.orbit)
-                    redraw()
-                }
-                viewportButton(systemImage: "hand.draw",
-                               title: "Pan",
-                               help: "Pan tool (H): left drag pans the camera.",
-                               active: model.viewportTool == .pan) {
-                    model.setViewportTool(.pan)
-                    redraw()
-                }
-                viewportButton(systemImage: "magnifyingglass",
-                               title: "Zoom",
-                               help: "Zoom tool (Z): left drag vertically zooms the camera.",
-                               active: model.viewportTool == .zoom) {
-                    model.setViewportTool(.zoom)
-                    redraw()
-                }
-            }
-
-            toolbarDivider
-
-            if model.canEditActiveMask {
-                toolbarGroup("Mask") {
-                    viewportButton(systemImage: "eraser",
-                                   title: "Erase",
-                                   help: "Mask eraser (E): drag on terrain to remove unwanted mask paths.",
-                                   active: model.maskBrushEnabled) {
-                        model.setMaskBrushEnabled(!model.maskBrushEnabled)
-                        redraw()
-                    }
-                }
-
-                toolbarDivider
-            }
-
-            toolbarGroup("Display") {
-                viewportButton(systemImage: "square.grid.3x3",
-                               title: "Grid",
-                               help: "Toggle grid",
-                               active: model.gridVisible) {
-                    model.setGridVisible(!model.gridVisible)
-                    redraw()
-                }
-                viewportButton(systemImage: "arrow.up.and.down.and.arrow.left.and.right",
-                               title: "Axes",
-                               help: "Toggle axes",
-                               active: model.axisVisible) {
-                    model.setAxisVisible(!model.axisVisible)
-                    redraw()
-                }
-                viewportButton(systemImage: "cube.transparent",
-                               title: "Wire",
-                               help: "Toggle wireframe",
-                               active: model.wireframeEnabled) {
-                    model.wireframeEnabled.toggle()
-                    model.applyViewportSettings()
-                    redraw()
-                }
-            }
-
-            Spacer()
-        }
-        .padding(.horizontal, 10)
-        .padding(.top, 6)
-        .frame(height: topToolbarHeight)
-        .background(Color(red: 0.115, green: 0.12, blue: 0.13).opacity(0.96))
-        .overlay(alignment: .bottom) {
-            Rectangle()
-                .fill(topToolbarDividerColor)
-                .frame(height: 1)
-        }
-    }
-
-    private func toolbarGroup<Content: View>(_ title: String,
-                                             @ViewBuilder content: () -> Content) -> some View {
-        VStack(spacing: 3) {
-            HStack(spacing: 6) {
-                content()
-            }
-            Text(title)
-                .font(.system(size: 8, weight: .bold))
-                .foregroundStyle(.white.opacity(0.38))
-                .textCase(.uppercase)
-                .lineLimit(1)
-        }
-    }
-
-    private func viewportButton(systemImage: String, title: String, help: String,
-                                active: Bool = false,
-                                action: @escaping () -> Void) -> some View {
-        viewportButton(title: title, help: help, active: active, action: action) {
-            Image(systemName: systemImage)
-                .font(.system(size: 14, weight: .semibold))
-        }
-    }
-
-    private func viewportButton<Icon: View>(title: String, help: String,
-                                            active: Bool = false,
-                                            action: @escaping () -> Void,
-                                            @ViewBuilder icon: () -> Icon) -> some View {
-        Button(action: action) {
-            VStack(spacing: 2) {
-                icon()
-                    .frame(height: 18)
-                Text(title)
-                    .font(.system(size: 8, weight: .semibold))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
-            }
-            .frame(width: 43, height: 42)
-            .contentShape(Rectangle())
-            .background(active ? Color.accentColor.opacity(0.35) : Color.white.opacity(0.07),
-                        in: RoundedRectangle(cornerRadius: 7, style: .continuous))
-        }
-        .buttonStyle(.plain)
-        .foregroundStyle(active ? Color.accentColor : Color.white.opacity(0.86))
-        .accessibilityLabel(Text(help))
-        .onHover { setToolbarHint(help, hovering: $0) }
-        .help(help)
-    }
-
     private func menuCheckButton(_ title: String, selected: Bool,
                                  action: @escaping () -> Void) -> some View {
         Button(action: action) {
@@ -519,63 +259,9 @@ struct ViewportSurface: View {
         }
     }
 
-    private var toolbarDivider: some View {
-        Rectangle()
-            .fill(Color.white.opacity(0.12))
-            .frame(width: 1, height: 48)
-            .padding(.horizontal, 4)
-            .padding(.top, 1)
-    }
-
     private func redraw() {
         viewport.setNeedsDisplay(viewport.bounds)
     }
-
-    private func saveDocument() {
-        if model.graphPath != nil {
-            _ = model.save()
-            return
-        }
-        let panel = NSSavePanel()
-        panel.allowedContentTypes = [.json]
-        panel.nameFieldStringValue = "terrain-graph.json"
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        _ = model.save(to: url.path)
-    }
-
-    private func openDocument() {
-        let panel = NSOpenPanel()
-        panel.allowedContentTypes = [.json]
-        panel.allowsMultipleSelection = false
-        panel.canChooseDirectories = false
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        model.load(from: url.path)
-    }
-}
-
-private struct FloppyDiskIcon: View {
-    var body: some View {
-        if let image = Self.image {
-            Image(nsImage: image)
-                .resizable()
-                .renderingMode(.template)
-                .interpolation(.high)
-                .scaledToFit()
-                .frame(width: 25, height: 25)
-        } else {
-            Image(systemName: "externaldrive")
-                .font(.system(size: 15, weight: .semibold))
-        }
-    }
-
-    private static let image: NSImage? = {
-        guard let url = Bundle.module.url(forResource: "save_icon", withExtension: "png"),
-              let image = NSImage(contentsOf: url) else {
-            return nil
-        }
-        image.isTemplate = true
-        return image
-    }()
 }
 
 struct AxisGizmo: View {
@@ -768,14 +454,17 @@ struct InspectorPanel: View {
         VStack(spacing: 0) {
             HStack {
                 Text("Inspector")
-                    .font(.headline)
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(.secondary)
+                    .textCase(.uppercase)
+                    .kerning(0.5)
                 Spacer()
             }
             .padding(.horizontal, 14)
-            .frame(height: topToolbarHeight)
+            .frame(height: panelHeaderHeight)
             .overlay(alignment: .bottom) {
                 Rectangle()
-                    .fill(topToolbarDividerColor)
+                    .fill(theiaChromeDivider)
                     .frame(height: 1)
             }
 
@@ -803,95 +492,4 @@ struct InspectorPanel: View {
         return model.document.node(id: id)?.type
     }
 
-}
-
-struct GraphActions: View {
-    @ObservedObject var model: TerrainModel
-    let viewport: TerrainMTKView
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .firstTextBaseline) {
-                Text("Graph")
-                    .font(.subheadline.weight(.semibold))
-                Spacer()
-                Button {
-                    openDocument()
-                    viewport.setNeedsDisplay(viewport.bounds)
-                } label: {
-                    Label("Load", systemImage: "folder")
-                }
-                .buttonStyle(.borderless)
-                Button {
-                    saveDocument()
-                    viewport.setNeedsDisplay(viewport.bounds)
-                } label: {
-                    Label("Save", systemImage: "square.and.arrow.down")
-                }
-                .buttonStyle(.borderless)
-            }
-
-            HStack {
-                Text(statusText)
-                    .font(.caption)
-                    .foregroundStyle(model.isDirty ? .orange : .secondary)
-                Spacer()
-            }
-
-            if let nodeId = model.selectedNodeId,
-               let node = model.document.node(id: nodeId) {
-                HStack {
-                    Text("selected")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Text("\(node.id) / \(node.type)")
-                        .font(.caption.monospaced())
-                        .lineLimit(1)
-                    Spacer()
-                }
-            } else if model.selectedConnectionId != nil {
-                HStack {
-                    Text("edge selected")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Button {
-                        model.deleteSelection()
-                        viewport.setNeedsDisplay(viewport.bounds)
-                    } label: {
-                        Label("Disconnect", systemImage: "xmark")
-                    }
-                    .buttonStyle(.borderless)
-                }
-            }
-        }
-    }
-
-    private var statusText: String {
-        let state = model.isDirty ? "unsaved changes" :
-            (model.saveStatus.isEmpty ? "saved in memory" : model.saveStatus)
-        guard let path = model.graphPath else { return state }
-        return "\(state) - \(URL(fileURLWithPath: path).lastPathComponent)"
-    }
-
-    private func saveDocument() {
-        if let _ = model.graphPath {
-            _ = model.save()
-            return
-        }
-        let panel = NSSavePanel()
-        panel.allowedContentTypes = [.json]
-        panel.nameFieldStringValue = "terrain-graph.json"
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        _ = model.save(to: url.path)
-    }
-
-    private func openDocument() {
-        let panel = NSOpenPanel()
-        panel.allowedContentTypes = [.json]
-        panel.allowsMultipleSelection = false
-        panel.canChooseDirectories = false
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        model.load(from: url.path)
-    }
 }

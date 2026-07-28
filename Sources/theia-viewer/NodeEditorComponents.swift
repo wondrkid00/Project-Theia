@@ -29,10 +29,13 @@ enum GraphPortPalette {
 }
 
 enum NodePortLayout {
-    static let width: CGFloat = 168
-    static let minimumHeight: CGFloat = 96
+    static let width: CGFloat = 182
+    static let minimumHeight: CGFloat = 104
     static let rowGap: CGFloat = 20
-    static let firstRowY: CGFloat = 52
+    /// Ports start below the two-line header (category line + node title) and
+    /// the rule that separates the header from the port block.
+    static let firstRowY: CGFloat = 60
+    static let headerHeight: CGFloat = 44
 
     static func size(inputCount: Int, outputCount: Int) -> CGSize {
         let rows = max(1, max(inputCount, outputCount))
@@ -109,31 +112,52 @@ struct NodeCard: View {
                         radius: selected ? 7 : 4,
                         y: selected ? 0 : 2)
 
-            HStack(spacing: 7) {
-                Image(systemName: NodeTypeCatalog.icon(for: node.type))
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(nodeTint)
-                    .frame(width: 17, height: 17)
-                    .background(nodeTint.opacity(0.12), in: Circle())
+            // Category stripe. Gaea tints each node by the family it belongs to,
+            // which is what lets you read a dense graph at a glance.
+            UnevenRoundedRectangle(topLeadingRadius: 6, topTrailingRadius: 6,
+                                   style: .continuous)
+                .fill(categoryColor)
+                .frame(width: cardSize.width, height: 3)
+
+            VStack(alignment: .leading, spacing: 1) {
+                HStack(spacing: 5) {
+                    Image(systemName: NodeTypeCatalog.icon(for: node.type))
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundStyle(categoryColor)
+                    Text(NodeTypeCatalog.categoryTitle(for: node.type))
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundStyle(categoryColor)
+                        .textCase(.uppercase)
+                        .kerning(0.4)
+                        .lineLimit(1)
+                }
                 Text(NodeTypeCatalog.nodeTitle(id: node.id, type: node.type))
-                    .font(.caption.weight(.semibold))
+                    .font(.system(size: 12, weight: .semibold))
                     .lineLimit(1)
-                Spacer(minLength: 24)
+                    .truncationMode(.middle)
             }
-            .padding(10)
+            .padding(.horizontal, 10)
+            .padding(.top, 9)
+            .frame(width: cardSize.width - 34, alignment: .leading)
             .help("\(NodeTypeCatalog.title(for: node.type)) · id \(node.id)")
+
+            // Rule between the header and the port block.
+            Rectangle()
+                .fill(Color.white.opacity(0.07))
+                .frame(width: cardSize.width, height: 1)
+                .offset(y: NodePortLayout.headerHeight)
 
             if hasMaskOutput {
                 Image(systemName: "circle.lefthalf.filled")
                     .font(.caption2)
                     .foregroundStyle(Color.cyan.opacity(0.85))
-                    .position(x: cardSize.width - 14, y: 14)
+                    .position(x: cardSize.width - 15, y: 17)
             }
 
             if node.type == "export" {
                 badge(systemImage: "square.and.arrow.up",
                       color: .purple)
-                    .position(x: cardSize.width - 14, y: 14)
+                    .position(x: cardSize.width - 15, y: 17)
             }
 
             if let diagnosticSeverity {
@@ -141,8 +165,8 @@ struct NodeCard: View {
                       ? "exclamationmark.triangle.fill"
                       : "exclamationmark.circle.fill",
                       color: diagnosticSeverity == "error" ? .red : .orange)
-                    .position(x: cardSize.width - 14,
-                              y: hasMaskOutput || node.type == "export" ? 32 : 14)
+                    .position(x: cardSize.width - 15,
+                              y: hasMaskOutput || node.type == "export" ? 35 : 17)
                     .transition(.scale.combined(with: .opacity))
             }
 
@@ -222,10 +246,8 @@ struct NodeCard: View {
         outputPorts.contains { $0.declaredKind == .mask }
     }
 
-    private var nodeTint: Color {
-        guard let output = outputPorts.first(where: \.isDefault)
-                ?? outputPorts.first else { return .secondary }
-        return GraphPortPalette.color(output.declaredKind)
+    private var categoryColor: Color {
+        NodeTypeCatalog.categoryColor(for: node.type)
     }
 
     private var borderColor: Color {

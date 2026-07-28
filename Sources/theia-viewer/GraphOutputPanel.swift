@@ -148,7 +148,9 @@ struct GraphOutputPanel: View {
                     .frame(minWidth: 10, alignment: .leading)
             }
         }
-        .frame(minWidth: severity == .all ? 58 : 112, minHeight: 32)
+        // Sized to fit the graph column, which is far narrower than the
+        // full-width dock this panel used to live in.
+        .frame(minWidth: severity == .all ? 46 : 74, minHeight: 26)
         .padding(.horizontal, 4)
         .background(filter == severity
                     ? Color.white.opacity(0.12)

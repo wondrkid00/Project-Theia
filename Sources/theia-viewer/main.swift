@@ -186,9 +186,14 @@ app.setActivationPolicy(.regular)
 let frame = NSRect(x: 0, y: 0, width: 1000, height: 680)
 let window = NSWindow(
     contentRect: frame,
-    styleMask: [.titled, .closable, .resizable, .miniaturizable],
+    styleMask: [.titled, .closable, .resizable, .miniaturizable, .fullSizeContentView],
     backing: .buffered, defer: false)
 window.title = "Theia Viewer"
+// The SwiftUI tree draws its own title/toolbar row in the titlebar area, so the
+// system titlebar becomes a transparent overlay carrying only the traffic
+// lights. This reclaims a full toolbar strip of vertical space.
+window.titlebarAppearsTransparent = true
+window.titleVisibility = .hidden
 
 let mtkView = TerrainMTKView(frame: frame, device: device)
 mtkView.colorPixelFormat = .bgra8Unorm

@@ -804,6 +804,51 @@ func runViewerSelfTests() -> Int32 {
         print("✓ typed parameter entry is clamped and snapped like the slider")
     }
 
+    // The inspector shows a per-parameter reset only on rows that differ from
+    // their default. If `defaultParams` came back empty for a node type, every
+    // row would silently read as unmodified and the reset control would never
+    // appear again — a feature that vanishes without any error.
+    do {
+        var missingDefaults: [String] = []
+        var undetected: [String] = []
+        for type in availableNodeTypesForSelfTest() {
+            let defaults = GraphDocument.defaultParams(for: type)
+            if defaults.isEmpty { continue }
+            for (name, fallback) in defaults {
+                let param = GraphParameter(nodeId: "probe", nodeType: type,
+                                           name: name, value: fallback)
+                let cfg = SliderConfig.forParam(param)
+
+                if ParameterSlider.isModified(value: fallback, default: fallback,
+                                              config: cfg) {
+                    undetected.append("\(type).\(name) reads modified at its default")
+                }
+                // A one-step move must register, otherwise dragging the slider
+                // by the smallest amount it allows leaves no reset affordance.
+                let moved = min(fallback + cfg.step, cfg.range.upperBound)
+                let alternative = max(fallback - cfg.step, cfg.range.lowerBound)
+                let probe = moved != fallback ? moved : alternative
+                if probe != fallback,
+                   !ParameterSlider.isModified(value: probe, default: fallback,
+                                               config: cfg) {
+                    undetected.append("\(type).\(name) misses a one-step edit")
+                }
+            }
+        }
+        // Guard the silent-empty case on the node types the UI leans on most.
+        for type in ["fluvial", "perlin", "slopemask", "thermal"]
+        where availableNodeTypesForSelfTest().contains(type) {
+            if GraphDocument.defaultParams(for: type).isEmpty {
+                missingDefaults.append(type)
+            }
+        }
+        expect(missingDefaults.isEmpty,
+               "node types with no defaults, so no reset marker: \(missingDefaults)")
+        expect(undetected.isEmpty,
+               "modified-vs-default detection wrong: \(undetected)")
+        print("✓ inspector detects modified parameters against their defaults")
+    }
+
     print("\n\(checks) viewer checks, \(failures) failure(s)")
     return failures == 0 ? 0 : 1
 }

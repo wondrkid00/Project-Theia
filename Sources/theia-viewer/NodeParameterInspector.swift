@@ -226,24 +226,20 @@ private struct NodeIdentityRow: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .center, spacing: 12) {
-                Image(systemName: presentation.icon)
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundStyle(presentation.tint)
-                    .frame(width: 42, height: 42)
-                    .background(presentation.tint.opacity(0.12),
-                                in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .stroke(presentation.tint.opacity(0.26), lineWidth: 1))
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .center, spacing: 9) {
+                // Category bar, matching the stripe on the node's card in the
+                // graph so the selection reads as the same object.
+                RoundedRectangle(cornerRadius: 1.5, style: .continuous)
+                    .fill(NodeTypeCatalog.categoryColor(for: node.type))
+                    .frame(width: 3, height: 28)
 
-                VStack(alignment: .leading, spacing: 3) {
+                VStack(alignment: .leading, spacing: 1) {
                     Text(node.id)
-                        .font(.title3.weight(.semibold))
+                        .font(.system(size: 14, weight: .semibold))
                         .lineLimit(1)
                     Text(presentation.subtitle)
-                        .font(.caption.weight(.semibold))
+                        .font(.system(size: 10, weight: .medium))
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
@@ -436,59 +432,88 @@ struct ParameterSlider: View {
                 }
             }
 
-            Divider()
-                .opacity(0.45)
-                .padding(.top, 12)
         }
-        .padding(.vertical, 8)
         .onChange(of: param.value) { _, newValue in
             value = newValue
         }
     }
 
+    /// One compact row per parameter. Gaea fits a whole node's controls on
+    /// screen without scrolling by keeping each row to a single line: label
+    /// left, control, value, and a modified marker at the far right. The
+    /// per-parameter description moves into the row's tooltip rather than
+    /// costing a second line on every row.
     private func row<Control: View>(@ViewBuilder control: () -> Control) -> some View {
-        HStack(alignment: .center, spacing: 10) {
-            ParameterIconBox(systemName: presentation.icon)
-
-            VStack(alignment: .leading, spacing: 3) {
-                Text(presentation.label)
-                    .font(.callout.weight(.semibold))
-                    .foregroundStyle(.primary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.78)
-
-                if let detail = presentation.detail {
-                    Text(detail)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-            .frame(width: 132, alignment: .leading)
+        HStack(spacing: 8) {
+            Text(presentation.label)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(.primary)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .frame(width: 104, alignment: .leading)
 
             control()
                 .frame(maxWidth: .infinity)
-
-            Button(action: onReset) {
-                Image(systemName: "arrow.counterclockwise")
-                    .font(.system(size: 13, weight: .bold))
-                    .frame(width: 32, height: 32)
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(.secondary)
-            .background(inspectorControlFill,
-                        in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .overlay(inspectorControlStroke())
-            .help("Reset \(presentation.label)")
 
             InspectorValueField(value: value, config: config,
                                 format: { presentation.format($0, config: config) }) { typed in
                 value = typed
                 onChange(typed)
             }
+
+            resetAffordance
         }
-        .frame(minHeight: 66)
+        .frame(height: 26)
+        .help(rowHelp)
+    }
+
+    private var rowHelp: String {
+        var text = presentation.label
+        if let detail = presentation.detail { text += " — \(detail)" }
+        if let fallback = defaultValue {
+            text += "\nDefault \(presentation.format(fallback, config: config))"
+        }
+        return text
+    }
+
+    private var defaultValue: Double? {
+        GraphDocument.defaultParams(for: param.nodeType)[param.name]
+    }
+
+    /// Gaea marks which sliders differ from their default. Showing the reset
+    /// control only on modified rows carries that signal and reclaims the space
+    /// a permanent button would take on every row.
+    ///
+    /// Half a step is the threshold because a slider cannot land closer than one
+    /// step to its default, so anything smaller is float noise, not an edit.
+    static func isModified(value: Double, default fallback: Double?,
+                           config: SliderConfig) -> Bool {
+        guard let fallback else { return false }
+        return abs(value - fallback) > max(config.step * 0.5, 1e-9)
+    }
+
+    private var isModified: Bool {
+        Self.isModified(value: value, default: defaultValue, config: config)
+    }
+
+    @ViewBuilder
+    private var resetAffordance: some View {
+        if isModified {
+            Button(action: onReset) {
+                Image(systemName: "arrow.counterclockwise")
+                    .font(.system(size: 9, weight: .bold))
+                    .frame(width: 16, height: 16)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(Color.accentColor)
+            .help("Reset \(presentation.label)")
+        } else {
+            Circle()
+                .fill(Color.secondary.opacity(0.20))
+                .frame(width: 4, height: 4)
+                .frame(width: 16, height: 16)
+        }
     }
 
     private var blendModeNames: [String] {
@@ -522,20 +547,6 @@ private struct ParameterMenuLabel: View {
                     in: RoundedRectangle(cornerRadius: 8, style: .continuous))
         .overlay(inspectorControlStroke())
         .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-    }
-}
-
-private struct ParameterIconBox: View {
-    let systemName: String
-
-    var body: some View {
-        Image(systemName: systemName)
-            .font(.system(size: 16, weight: .semibold))
-            .foregroundStyle(.secondary)
-            .frame(width: 34, height: 34)
-            .background(inspectorControlFill,
-                        in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .overlay(inspectorControlStroke())
     }
 }
 
@@ -1018,13 +1029,13 @@ struct InspectorValueField: View {
         TextField("", text: $draft)
             .textFieldStyle(.plain)
             .multilineTextAlignment(.center)
-            .font(.callout.monospacedDigit().weight(.semibold))
+            .font(.system(size: 11, weight: .semibold).monospacedDigit())
             .foregroundStyle(.primary)
             .lineLimit(1)
             .focused($focused)
-            .frame(width: 76, height: 34)
+            .frame(width: 56, height: 20)
             .background(inspectorControlFill,
-                        in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        in: RoundedRectangle(cornerRadius: 5, style: .continuous))
             .overlay(inspectorControlStroke())
             .onSubmit(commit)
             .onChange(of: focused) { wasFocused, isFocused in

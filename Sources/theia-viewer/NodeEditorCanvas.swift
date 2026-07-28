@@ -131,6 +131,33 @@ enum NodeTypeCatalog {
                       types: ["export"]),
     ]
 
+    /// The catalog group a node type belongs to. Node cards, the add palette and
+    /// the inspector all colour from this one source so a node's category reads
+    /// the same wherever it appears.
+    static func group(for type: String) -> NodeTypeGroup? {
+        groups.first { $0.types.contains(type) }
+    }
+
+    static func categoryTitle(for type: String) -> String {
+        group(for: type)?.title ?? "Other"
+    }
+
+    static func categoryColor(for type: String) -> Color {
+        switch group(for: type)?.id {
+        case "terrain": return Color(red: 0.44, green: 0.70, blue: 0.46)
+        case "noise": return Color(red: 0.57, green: 0.62, blue: 0.74)
+        case "shape": return Color(red: 0.80, green: 0.68, blue: 0.38)
+        case "combine": return Color(red: 0.55, green: 0.58, blue: 0.88)
+        case "filter": return Color(red: 0.46, green: 0.74, blue: 0.84)
+        case "mask": return Color(red: 0.36, green: 0.76, blue: 0.80)
+        case "erosion": return Color(red: 0.88, green: 0.54, blue: 0.36)
+        case "erosionLegacy": return Color(red: 0.64, green: 0.48, blue: 0.40)
+        case "river": return Color(red: 0.38, green: 0.64, blue: 0.92)
+        case "output": return Color(red: 0.74, green: 0.50, blue: 0.88)
+        default: return Color(red: 0.56, green: 0.56, blue: 0.60)
+        }
+    }
+
     static func grouped(_ availableTypes: [String]) -> [NodeTypeGroup] {
         let available = Set(availableTypes)
         var used = Set<String>()
@@ -260,6 +287,11 @@ struct NodeEditorCanvas: View {
     @State private var nodePicker: CanvasNodePickerState?
     @State private var connectionFeedback: String?
     @State private var feedbackGeneration = 0
+    /// False until the user pans or zooms the canvas themselves. While false the
+    /// graph re-frames itself on every layout change, which matters because the
+    /// pane's real size arrives after the first layout pass — latching onto that
+    /// first (wrong) size leaves the graph parked off-screen.
+    @State private var userAdjustedView = false
 
     var body: some View {
         GeometryReader { geo in
@@ -402,6 +434,7 @@ struct NodeEditorCanvas: View {
                     onChanged: { delta in
                         if panDragStart == nil { panDragStart = pan }
                         guard let start = panDragStart else { return }
+                        userAdjustedView = true
                         pan = CGSize(width: start.width + delta.width,
                                      height: start.height - delta.height)
                     },
@@ -409,9 +442,11 @@ struct NodeEditorCanvas: View {
                         panDragStart = nil
                     },
                     onZoom: { delta, point in
+                        userAdjustedView = true
                         zoomCanvas(delta: delta, anchor: point)
                     },
                     onPanBy: { delta in
+                        userAdjustedView = true
                         pan = CGSize(width: pan.width + delta.width,
                                      height: pan.height + delta.height)
                     },
@@ -451,9 +486,25 @@ struct NodeEditorCanvas: View {
                     marqueeStart = nil
                     marqueeEnd = nil
                 })
-            .onChange(of: geo.size) { _, _ in }
+            .onAppear { applyFitIfNeeded(in: geo.size) }
+            .onChange(of: geo.size) { _, size in applyFitIfNeeded(in: size) }
+            .onChange(of: model.document.nodes.count) { previous, current in
+                // Re-frame when a graph arrives in an empty canvas (document
+                // load), not on every add — that would fight the user's panning.
+                if previous == 0 && current > 0 {
+                    userAdjustedView = false
+                    applyFitIfNeeded(in: geo.size)
+                }
+            }
             .overlay(alignment: .topLeading) {
-                CanvasToolbar(model: model, zoom: $zoom, viewport: viewport)
+                CanvasToolbar(model: model,
+                              zoom: Binding(get: { zoom },
+                                            set: { zoom = $0; userAdjustedView = true }),
+                              viewport: viewport,
+                              onFitRequested: {
+                                  userAdjustedView = false
+                                  applyFitIfNeeded(in: geo.size)
+                              })
                     .padding(.top, 10)
                     .padding(.leading, 8)
             }
@@ -506,12 +557,50 @@ struct NodeEditorCanvas: View {
                 }
             }
         }
-        .frame(minHeight: 340)
+        // Kept low: the canvas now shares its pane with a tab strip and the
+        // output tray, and a tall minimum pushes both out of view.
+        .frame(minHeight: 150)
     }
 
     private func nodePosition(_ id: String) -> CGPoint {
         let p = model.position(for: id)
         return CGPoint(x: p.x, y: p.y)
+    }
+
+    /// Frame every node in the visible canvas. Stays active until the user pans
+    /// or zooms, so late layout passes correct the framing rather than locking
+    /// in whatever size the first pass happened to report.
+    private func applyFitIfNeeded(in size: CGSize) {
+        guard !userAdjustedView else { return }
+        guard size.width > 1, size.height > 1 else { return }
+        guard !model.document.nodes.isEmpty else { return }
+
+        var minX = CGFloat.greatestFiniteMagnitude
+        var minY = CGFloat.greatestFiniteMagnitude
+        var maxX = -CGFloat.greatestFiniteMagnitude
+        var maxY = -CGFloat.greatestFiniteMagnitude
+        for node in model.document.nodes {
+            let origin = nodePosition(node.id)
+            let card = nodeCardSize(node)
+            minX = min(minX, origin.x)
+            minY = min(minY, origin.y)
+            maxX = max(maxX, origin.x + card.width)
+            maxY = max(maxY, origin.y + card.height)
+        }
+        guard minX <= maxX, minY <= maxY else { return }
+
+        let inset: CGFloat = 28
+        let contentWidth = max(maxX - minX, 1)
+        let contentHeight = max(maxY - minY, 1)
+        let fitScale = min((size.width - inset * 2) / contentWidth,
+                           (size.height - inset * 2) / contentHeight)
+        // Never zoom *in* past 1:1 just because the graph is small — a two-node
+        // graph blown up to fill the column reads as broken.
+        let nextZoom = min(max(min(fitScale, 1.0), minCanvasZoom), maxCanvasZoom)
+
+        zoom = nextZoom
+        pan = CGSize(width: (size.width - contentWidth * nextZoom) / 2 - minX * nextZoom,
+                     height: (size.height - contentHeight * nextZoom) / 2 - minY * nextZoom)
     }
 
     private var marqueeRect: CGRect? {
@@ -1090,15 +1179,19 @@ struct CanvasToolbar: View {
     @ObservedObject var model: TerrainModel
     @Binding var zoom: Double
     let viewport: TerrainMTKView
+    let onFitRequested: () -> Void
     @State private var addPopoverPresented = false
     @State private var selectedAddGroupId: String?
 
     var body: some View {
-        HStack(spacing: 10) {
+        // Icon-only and grouped so the whole bar fits the graph column, which is
+        // much narrower than the full-width dock this used to sit in. Every
+        // action keeps its tooltip, so nothing becomes unidentifiable.
+        HStack(spacing: 2) {
             Button {
                 addPopoverPresented.toggle()
             } label: {
-                toolbarLabel("Add", systemImage: "plus")
+                toolbarIcon("plus", help: "Add node (A)")
             }
             .buttonStyle(.plain)
             .popover(isPresented: $addPopoverPresented, arrowEdge: .bottom) {
@@ -1111,11 +1204,13 @@ struct CanvasToolbar: View {
                 }
             }
 
+            separator
+
             Button {
                 model.deleteSelection()
                 viewport.setNeedsDisplay(viewport.bounds)
             } label: {
-                toolbarLabel("Delete", systemImage: "trash")
+                toolbarIcon("trash", help: "Delete selection (⌫)")
             }
             .buttonStyle(.plain)
             .disabled(model.selectedNodeId == nil && model.selectedConnectionId == nil)
@@ -1124,23 +1219,29 @@ struct CanvasToolbar: View {
                 model.duplicateSelection()
                 viewport.setNeedsDisplay(viewport.bounds)
             } label: {
-                toolbarLabel("Duplicate", systemImage: "plus.square.on.square")
+                toolbarIcon("plus.square.on.square", help: "Duplicate selection")
             }
             .buttonStyle(.plain)
             .disabled(model.selectedNodeId == nil && model.selectedNodeIds.isEmpty)
 
+            separator
+
             Button {
                 model.resetLayout()
+                onFitRequested()
             } label: {
-                toolbarLabel("Layout", systemImage: "rectangle.connected.to.line.below")
+                toolbarIcon("rectangle.connected.to.line.below",
+                            help: "Auto-layout and frame graph")
             }
             .buttonStyle(.plain)
+
+            separator
 
             Button {
                 model.undo()
                 viewport.setNeedsDisplay(viewport.bounds)
             } label: {
-                toolbarLabel("Undo", systemImage: "arrow.uturn.backward")
+                toolbarIcon("arrow.uturn.backward", help: "Undo (⌘Z)")
             }
             .buttonStyle(.plain)
 
@@ -1148,30 +1249,56 @@ struct CanvasToolbar: View {
                 model.redo()
                 viewport.setNeedsDisplay(viewport.bounds)
             } label: {
-                toolbarLabel("Redo", systemImage: "arrow.uturn.forward")
+                toolbarIcon("arrow.uturn.forward", help: "Redo (⇧⌘Z)")
             }
             .buttonStyle(.plain)
 
-            Slider(value: $zoom, in: minCanvasZoom...maxCanvasZoom, step: 0.1)
-                .padding(.horizontal, 10)
-                .frame(width: 124, height: 30)
-                .background(toolbarFill,
-                            in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+            separator
+
+            zoomControl
         }
+        .padding(.horizontal, 4)
+        .frame(height: 30)
+        .background(toolbarFill,
+                    in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .stroke(Color.white.opacity(0.07), lineWidth: 1))
+    }
+
+    private var zoomControl: some View {
+        HStack(spacing: 4) {
+            Slider(value: $zoom, in: minCanvasZoom...maxCanvasZoom, step: 0.1)
+                .controlSize(.mini)
+                .frame(width: 68)
+            Text("\(Int((zoom * 100).rounded()))%")
+                .font(.system(size: 10, weight: .semibold).monospacedDigit())
+                .foregroundStyle(.secondary)
+                .frame(width: 32, alignment: .trailing)
+        }
+        .padding(.trailing, 4)
+        .help("Canvas zoom")
+    }
+
+    private var separator: some View {
+        Rectangle()
+            .fill(Color.white.opacity(0.10))
+            .frame(width: 1, height: 16)
+            .padding(.horizontal, 3)
     }
 
     private var toolbarFill: Color {
         Color(red: 0.22, green: 0.22, blue: 0.24)
     }
 
-    private func toolbarLabel(_ title: String, systemImage: String) -> some View {
-        Label(title, systemImage: systemImage)
-            .font(.system(size: 13, weight: .semibold))
+    private func toolbarIcon(_ systemImage: String, help: String) -> some View {
+        Image(systemName: systemImage)
+            .font(.system(size: 12, weight: .semibold))
             .foregroundStyle(Color.white.opacity(0.9))
-            .padding(.horizontal, 12)
-            .frame(height: 30)
-            .background(toolbarFill,
-                        in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .frame(width: 26, height: 24)
+            .contentShape(Rectangle())
+            .help(help)
+            .accessibilityLabel(Text(help))
     }
 }
 
