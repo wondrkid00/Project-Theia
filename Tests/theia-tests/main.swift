@@ -2211,7 +2211,9 @@ h.test("Terrain primitives are consistent at 128, 256, and 512 samples") {
                 }
             }
             let difference = meanAbsoluteDifference(coarse, sampled)
-            h.expect(difference < 0.06,
+            // Every primitive sits at or below 1.6e-4. The bound was 0.06, which
+            // let volcano drift to 0.052 — 87% of the limit — without failing.
+            h.expect(difference < 0.005,
                      "\(primitive.type) changes at \(fineSize) samples, " +
                      "mean diff \(difference)")
         }
@@ -2379,7 +2381,13 @@ h.test("Volcano piedmont carries texture smoothly past the cone radius") {
 }
 
 h.test("Volcano erosion reuses the default Fluvial node") {
-    let size = 64
+    // Volcano runs its erosion on a fixed internal grid so the landform does
+    // not change shape with the requested sample count. Fluvial is not
+    // scale-free, so "volcano at radialErosion=1 equals a standalone Fluvial
+    // pass" can only hold where the output grid IS that internal grid — the two
+    // properties are mutually exclusive at any other size, and the primitive
+    // contract is the one that matters to a preview-then-export workflow.
+    let size = 512
     let integrated = evalGraphHeightsJSON(
         primitiveJSON(
             "volcano",

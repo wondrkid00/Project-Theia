@@ -559,6 +559,65 @@ benches at roughly a fifth of that cost. Benching uses `smooth5` within each
 band; the resulting near-zero gradient at band edges is why the effect is mixed
 rather than applied outright, since flats stall the river tracing.
 
+## Composite primitives run their simulation on a fixed grid (added 2026-07-29)
+
+A primitive is a *landform*: the same node with the same parameters must
+describe the same shape at any requested sample count. The suite enforces this
+by resampling a 128² evaluation against 256² and 512² and bounding the mean
+absolute difference.
+
+`canyon` already honoured that by running its river tracing and carve on a fixed
+256 internal grid. `volcano` did not — it ran its `fluvial` erosion pass at the
+*output* resolution, and fluvial is not scale-free. Measured drift against 128²:
+
+| primitive | @256 | @512 |
+|---|---|---|
+| volcano (before) | 0.031025 | **0.052119** |
+| mountainrange | 0.000154 | 0.000035 |
+| mountain | 0.000127 | 0.000026 |
+| crater | 0.000112 | 0.000019 |
+| rollinghills | 0.000045 | 0.000011 |
+| canyon | 0.000000 | 0.000032 |
+
+Volcano sat ~350× above every other primitive and at 87% of the 0.06 bound, so
+the guard would have failed on any further tuning without ever having flagged
+the underlying defect.
+
+The cause is that `fluvial` runs a fixed iteration count at a fixed `dt`. On a
+finer grid that same budget is spread over more cells, so per-cell incision
+never develops and the radial gully signature washes out. The 2048 render was
+therefore not a finer version of the 512 one — it was a visibly *weaker*
+landform.
+
+Volcano now pins its erosion to `kVolcanoErosionGrid = 512` and resamples, as
+canyon does. Only the erosion **delta** is resampled: the analytic cone is still
+evaluated at full output resolution, so the pinning costs detail in the eroded
+channels alone. Drift at 512 falls from 0.052119 to 0.000031, and the suite's
+bound tightens from 0.06 to 0.005 so a comparable regression fails immediately.
+
+Because fluvial cost grows superlinearly with the grid, this is also a large
+speed-up at the sizes people actually export:
+
+| output | before | after |
+|---|---|---|
+| 128 | 0.73 s | 1.33 s |
+| 512 | 1.29 s | 1.31 s |
+| 1024 | 18.23 s | 1.48 s |
+| 2048 | 145.57 s | 1.44 s |
+
+The 128 case is slower because erosion now runs at 512 regardless; that is below
+the 1024 default working size and costs 0.6 s.
+
+### Contract that had to be given up
+
+The previous design stated that volcano at `radialErosion = 1` equals a
+standalone default `fluvial` pass on the volcano base. That property and
+resolution independence are mutually exclusive, because the standalone pass is
+itself resolution-dependent. The equivalence is kept — and still asserted
+exactly — at the internal grid size, and the primitive contract wins everywhere
+else. Chain an explicit `fluvial` node downstream to resolve erosion at the
+output grid instead.
+
 ## Reference-grounded morphology
 
 Two primitives were rebuilt against published morphometry rather than tuned by

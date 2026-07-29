@@ -18,6 +18,11 @@
 namespace theia {
 namespace {
 
+// Fixed grid for volcano's fluvial erosion pass, so the landform does not
+// change shape with the requested sample count. 512 keeps visibly more channel
+// detail than canyon's 256 routing grid while staying cheap enough for preview.
+constexpr std::uint32_t kVolcanoErosionGrid = 512;
+
 using P = TerrainPrimitiveParamDescriptor;
 
 constexpr P kRollingHills[] = {
@@ -322,29 +327,94 @@ bool evaluateVolcano(GPUContext& ctx, const TerrainPrimitiveNode& node,
         return false;
     }
 
+    // A primitive is a landform: the same Volcano must describe the same shape
+    // at any requested sample count. Fluvial erosion is not scale-free — a finer
+    // grid resolves a genuinely different channel network — so running it at the
+    // output resolution made Volcano the one primitive whose shape drifted with
+    // sampling (mean |diff| 0.052 at 512 against 0.00015 for every other
+    // primitive). Pin the erosion pass to a fixed internal grid, exactly as
+    // canyon pins its routing, and resample the result.
+    //
+    // Only the erosion *delta* is resampled: the analytic cone stays at full
+    // output resolution, so pinning costs detail in the eroded channels alone.
+    // Chain an explicit Fluvial node downstream to resolve erosion at the output
+    // grid instead.
+    std::uint32_t internalWidth = kVolcanoErosionGrid;
+    std::uint32_t internalHeight = kVolcanoErosionGrid;
+    if (out.width() >= out.height()) {
+        const double ratio = double(out.height() - 1) / double(out.width() - 1);
+        internalHeight = std::clamp(
+            std::uint32_t(std::llround(ratio * double(kVolcanoErosionGrid - 1))) + 1,
+            3u, kVolcanoErosionGrid);
+    } else {
+        const double ratio = double(out.width() - 1) / double(out.height() - 1);
+        internalWidth = std::clamp(
+            std::uint32_t(std::llround(ratio * double(kVolcanoErosionGrid - 1))) + 1,
+            3u, kVolcanoErosionGrid);
+    }
+
+    Heightfield internalBase(ctx, internalWidth, internalHeight);
+    Heightfield internalEroded(ctx, internalWidth, internalHeight);
+    if (!internalBase.valid() || !internalEroded.valid()) {
+        error = "volcano '" + node.id() +
+                "': temporary erosion allocation failed";
+        return false;
+    }
+    PrimitiveParamsGPU internalGPU = gpu;
+    internalGPU.width = internalWidth;
+    internalGPU.height = internalHeight;
+    if (!dispatchPrimitive(ctx, d, internalGPU, internalBase, error)) {
+        error = "volcano '" + node.id() + "' erosion base: " + error;
+        return false;
+    }
+
     // Reuse the exact default drainage-area-driven landscape evolution
     // implementation exposed by the Fluvial node. The public 0...1 control is
     // the blend amount against that result; zero remains an exact analytic
     // Volcano bypass and one matches a standalone default Fluvial pass.
     FluvialNode fluvial(node.id() + ":fluvial");
-    std::vector<const Heightfield*> fluvialInputs{&base};
-    if (!fluvial.evaluate(ctx, fluvialInputs, out, error)) {
+    std::vector<const Heightfield*> fluvialInputs{&internalBase};
+    if (!fluvial.evaluate(ctx, fluvialInputs, internalEroded, error)) {
         error = "volcano '" + node.id() + "' fluvial erosion: " + error;
         return false;
     }
 
-    for (std::size_t i = 0; i < out.count(); ++i) {
-        const float eroded = out.data()[i];
-        if (!std::isfinite(eroded)) {
-            error = "volcano '" + node.id() +
-                    "': fluvial erosion produced non-finite terrain";
-            return false;
+    const float* sourceBase = internalBase.data();
+    const float* sourceEroded = internalEroded.data();
+    for (std::uint32_t y = 0; y < out.height(); ++y) {
+        const float sy = float(y) * float(internalHeight - 1) /
+                         float(out.height() - 1);
+        const auto y0 = std::uint32_t(std::floor(sy));
+        const std::uint32_t y1 = std::min(y0 + 1, internalHeight - 1);
+        const float fy = sy - float(y0);
+        for (std::uint32_t x = 0; x < out.width(); ++x) {
+            const float sx = float(x) * float(internalWidth - 1) /
+                             float(out.width() - 1);
+            const auto x0 = std::uint32_t(std::floor(sx));
+            const std::uint32_t x1 = std::min(x0 + 1, internalWidth - 1);
+            const float fx = sx - float(x0);
+            auto bilinear = [&](const float* source) {
+                const float a = source[std::size_t(y0) * internalWidth + x0];
+                const float b = source[std::size_t(y0) * internalWidth + x1];
+                const float c = source[std::size_t(y1) * internalWidth + x0];
+                const float e = source[std::size_t(y1) * internalWidth + x1];
+                return (a * (1.0f - fx) + b * fx) * (1.0f - fy) +
+                       (c * (1.0f - fx) + e * fx) * fy;
+            };
+            const float erodedSample = bilinear(sourceEroded);
+            if (!std::isfinite(erodedSample)) {
+                error = "volcano '" + node.id() +
+                        "': fluvial erosion produced non-finite terrain";
+                return false;
+            }
+            // base + A * (eroded - base) is the original blend, rearranged so
+            // only the erosion signal comes from the resampled grid.
+            const float delta =
+                std::clamp(erodedSample, 0.0f, 1.0f) - bilinear(sourceBase);
+            const std::size_t i = std::size_t(y) * out.width() + x;
+            out.data()[i] =
+                std::clamp(base.data()[i] + erosionAmount * delta, 0.0f, 1.0f);
         }
-        const float boundedErosion = std::clamp(eroded, 0.0f, 1.0f);
-        out.data()[i] = std::clamp(
-            base.data()[i] * (1.0f - erosionAmount) +
-                boundedErosion * erosionAmount,
-            0.0f, 1.0f);
     }
     return true;
 }
