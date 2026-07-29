@@ -710,6 +710,41 @@ func runViewerSelfTests() -> Int32 {
         expect(false, "Metal renderer unavailable for document rename test")
     }
 
+    // ErosionFilterNode overwrites fadeCenter/fadeRange from the input's height
+    // range whenever fadeAuto is on, which is the default. Those two sliders
+    // therefore do nothing out of the box, and a control that silently does
+    // nothing reads as a broken tool. The inspector marks them inactive; this
+    // pins that to the node's real gating condition.
+    do {
+        func node(fadeAuto: Double) -> GraphNodeInfo {
+            let names = ["fadeAuto", "fadeCenter", "fadeRange", "strength"]
+            return GraphNodeInfo(
+                id: "ef", type: "erosionfilter",
+                params: names.map {
+                    GraphParameter(nodeId: "ef", nodeType: "erosionfilter",
+                                   name: $0,
+                                   value: $0 == "fadeAuto" ? fadeAuto : 0.5)
+                })
+        }
+        func reason(_ name: String, fadeAuto: Double) -> String? {
+            let n = node(fadeAuto: fadeAuto)
+            guard let p = n.params.first(where: { $0.name == name }) else { return nil }
+            return ParameterGate.inactiveReason(for: p, in: n)
+        }
+        expect(reason("fadeCenter", fadeAuto: 1) != nil &&
+               reason("fadeRange", fadeAuto: 1) != nil,
+               "fade center/range should read as inactive while Fade Auto is on")
+        expect(reason("fadeCenter", fadeAuto: 0) == nil &&
+               reason("fadeRange", fadeAuto: 0) == nil,
+               "fade center/range should become active when Fade Auto is off")
+        expect(reason("strength", fadeAuto: 1) == nil,
+               "ungated parameters must never be marked inactive")
+        // The default really is fadeAuto on, which is what makes this matter.
+        expect(GraphDocument.defaultParams(for: "erosionfilter")["fadeAuto"] == 1,
+               "fadeAuto is expected to default on; revisit the gate if that changes")
+        print("✓ overridden parameters are reported as inactive")
+    }
+
     // A slider drag delivers one apply() per tick. Without coalescing, a single
     // drag pushed ~40 snapshots into a 100-deep stack, so one gesture could
     // evict the entire real undo history.

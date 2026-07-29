@@ -129,7 +129,10 @@ struct NodeParameterInspector: View {
 
                     VStack(alignment: .leading, spacing: 0) {
                         ForEach(basicParams(for: node)) { param in
-                            ParameterSlider(param: param) { value in
+                            ParameterSlider(
+                                param: param,
+                                inactiveReason: ParameterGate.inactiveReason(
+                                    for: param, in: node)) { value in
                                 model.apply(nodeId: param.nodeId,
                                             param: param.name,
                                             value: value)
@@ -150,7 +153,10 @@ struct NodeParameterInspector: View {
                         DisclosureGroup(isExpanded: $advancedExpanded) {
                             VStack(alignment: .leading, spacing: 0) {
                                 ForEach(advanced) { param in
-                                    ParameterSlider(param: param) { value in
+                                    ParameterSlider(
+                                        param: param,
+                                        inactiveReason: ParameterGate.inactiveReason(
+                                            for: param, in: node)) { value in
                                         model.apply(nodeId: param.nodeId,
                                                     param: param.name,
                                                     value: value)
@@ -386,22 +392,49 @@ private struct NodePresentation {
     }
 }
 
+/// Some parameters are overridden by another control on the same node. Dragging
+/// one of those does nothing at all, which reads as a broken tool rather than a
+/// disabled option, so the row says why it is inactive.
+enum ParameterGate {
+    static func inactiveReason(for param: GraphParameter,
+                               in node: GraphNodeInfo) -> String? {
+        func value(_ name: String, default fallback: Double) -> Double {
+            node.params.first { $0.name == name }?.value ?? fallback
+        }
+        switch (param.nodeType, param.name) {
+        case ("erosionfilter", "fadeCenter"), ("erosionfilter", "fadeRange"):
+            // ErosionFilterNode overwrites both when fadeAuto is on, fitting
+            // them to the input's measured height range.
+            return value("fadeAuto", default: 1) >= 0.5
+                ? "Fade Auto is fitting this to the input's height range. "
+                    + "Turn Fade Auto off to set it by hand."
+                : nil
+        default:
+            return nil
+        }
+    }
+}
+
 struct ParameterSlider: View {
     let param: GraphParameter
     let onChange: (Double) -> Void
     let onReset: () -> Void
     /// Closes the undo group for this control when a drag or typed entry ends.
     let onEditingEnded: () -> Void
+    /// Non-nil when another control currently overrides this one.
+    var inactiveReason: String? = nil
 
     @State private var value: Double
     private let config: SliderConfig
     private let presentation: ParameterPresentation
 
     init(param: GraphParameter,
+         inactiveReason: String? = nil,
          onChange: @escaping (Double) -> Void,
          onReset: @escaping () -> Void,
          onEditingEnded: @escaping () -> Void) {
         self.param = param
+        self.inactiveReason = inactiveReason
         self.onChange = onChange
         self.onReset = onReset
         self.onEditingEnded = onEditingEnded
@@ -455,16 +488,25 @@ struct ParameterSlider: View {
     /// per-parameter description moves into the row's tooltip rather than
     /// costing a second line on every row.
     private func row<Control: View>(@ViewBuilder control: () -> Control) -> some View {
-        HStack(spacing: 8) {
-            Text(presentation.label)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(.primary)
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .frame(width: 104, alignment: .leading)
+        let inactive = inactiveReason != nil
+        return HStack(spacing: 8) {
+            HStack(spacing: 4) {
+                Text(presentation.label)
+                    .font(.system(size: 11, weight: .medium))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                if inactive {
+                    Image(systemName: "lock.fill")
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .foregroundStyle(inactive ? .secondary : .primary)
+            .frame(width: 104, alignment: .leading)
 
             control()
                 .frame(maxWidth: .infinity)
+                .disabled(inactive)
 
             InspectorValueField(value: value, config: config,
                                 format: { presentation.format($0, config: config) }) { typed in
@@ -472,10 +514,17 @@ struct ParameterSlider: View {
                 onChange(typed)
                 onEditingEnded()
             }
+            .disabled(inactive)
 
+            // Reset stays live even while the row is gated: a value modified
+            // before the gate closed still applies once it reopens, so locking
+            // reset away would strand it.
             resetAffordance
         }
         .frame(height: 26)
+        // Dimmed rather than hidden: the value being driven is still worth
+        // reading, and the tooltip names the control driving it.
+        .opacity(inactive ? 0.55 : 1)
         .help(rowHelp)
     }
 
@@ -485,6 +534,7 @@ struct ParameterSlider: View {
         if let fallback = defaultValue {
             text += "\nDefault \(presentation.format(fallback, config: config))"
         }
+        if let inactiveReason { text += "\n\n\(inactiveReason)" }
         return text
     }
 
