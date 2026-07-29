@@ -137,7 +137,10 @@ struct NodeParameterInspector: View {
                             } onReset: {
                                 model.resetParam(nodeId: param.nodeId,
                                                  param: param.name)
+                                model.endParameterEdit()
                                 viewport.setNeedsDisplay(viewport.bounds)
+                            } onEditingEnded: {
+                                model.endParameterEdit()
                             }
                         }
                     }
@@ -155,7 +158,10 @@ struct NodeParameterInspector: View {
                                     } onReset: {
                                         model.resetParam(nodeId: param.nodeId,
                                                          param: param.name)
+                                        model.endParameterEdit()
                                         viewport.setNeedsDisplay(viewport.bounds)
+                                    } onEditingEnded: {
+                                        model.endParameterEdit()
                                     }
                                 }
                             }
@@ -384,6 +390,8 @@ struct ParameterSlider: View {
     let param: GraphParameter
     let onChange: (Double) -> Void
     let onReset: () -> Void
+    /// Closes the undo group for this control when a drag or typed entry ends.
+    let onEditingEnded: () -> Void
 
     @State private var value: Double
     private let config: SliderConfig
@@ -391,10 +399,12 @@ struct ParameterSlider: View {
 
     init(param: GraphParameter,
          onChange: @escaping (Double) -> Void,
-         onReset: @escaping () -> Void) {
+         onReset: @escaping () -> Void,
+         onEditingEnded: @escaping () -> Void) {
         self.param = param
         self.onChange = onChange
         self.onReset = onReset
+        self.onEditingEnded = onEditingEnded
         _value = State(initialValue: param.value)
         config = SliderConfig.forParam(param)
         presentation = ParameterPresentation.for(param)
@@ -427,7 +437,8 @@ struct ParameterSlider: View {
                         }),
                                       range: config.range,
                                       step: config.step,
-                                      isContinuous: true)
+                                      isContinuous: true,
+                                      onEditingEnded: onEditingEnded)
                         .frame(minWidth: 96)
                 }
             }
@@ -459,6 +470,7 @@ struct ParameterSlider: View {
                                 format: { presentation.format($0, config: config) }) { typed in
                 value = typed
                 onChange(typed)
+                onEditingEnded()
             }
 
             resetAffordance

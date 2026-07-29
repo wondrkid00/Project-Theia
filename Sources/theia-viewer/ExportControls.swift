@@ -349,6 +349,9 @@ struct ExportPlainSlider: NSViewRepresentable {
     let range: ClosedRange<Double>
     let step: Double
     var isContinuous: Bool = true
+    /// Fires when a drag finishes, so callers can close an undo group rather
+    /// than guessing from timing.
+    var onEditingEnded: (() -> Void)?
 
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
@@ -394,6 +397,11 @@ struct ExportPlainSlider: NSViewRepresentable {
             }
             parent.value = min(parent.range.upperBound,
                                max(parent.range.lowerBound, stepped))
+            // A continuous NSSlider reports the drag's final tick with a
+            // leftMouseUp current event, which is the gesture boundary.
+            if NSApp.currentEvent?.type == .leftMouseUp {
+                parent.onEditingEnded?()
+            }
         }
     }
 }

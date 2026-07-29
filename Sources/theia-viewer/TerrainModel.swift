@@ -471,7 +471,9 @@ final class TerrainModel: ObservableObject {
     }
 
     func apply(nodeId: String, param: String, value: Double) {
-        pushUndo()
+        // A slider drag delivers one call per tick. They collapse into a single
+        // undo step until the gesture ends or a different control is touched.
+        pushUndo(coalescingKey: "param:\(nodeId).\(param)")
         document.setParam(nodeId: nodeId, key: param, value: value)
         markDirty()
         guard theia.graph_set_param(engine.handle, nodeId, param, value) else {
@@ -1142,9 +1144,16 @@ final class TerrainModel: ObservableObject {
         restore(next, status: "redo")
     }
 
-    private func pushUndo() {
+    private func pushUndo(coalescingKey: String? = nil) {
         guard !isRestoringHistory else { return }
-        history.record(document)
+        history.record(document, coalescingKey: coalescingKey)
+    }
+
+    /// Ends the current parameter gesture so the next edit to the same control
+    /// starts a fresh undo step. Called when a slider drag finishes or a typed
+    /// value is committed.
+    func endParameterEdit() {
+        history.endCoalescing()
     }
 
     private func restore(_ snapshot: GraphDocument, status: String) {

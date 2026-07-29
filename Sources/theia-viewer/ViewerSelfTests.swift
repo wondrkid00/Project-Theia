@@ -710,6 +710,57 @@ func runViewerSelfTests() -> Int32 {
         expect(false, "Metal renderer unavailable for document rename test")
     }
 
+    // A slider drag delivers one apply() per tick. Without coalescing, a single
+    // drag pushed ~40 snapshots into a 100-deep stack, so one gesture could
+    // evict the entire real undo history.
+    do {
+        var history = GraphDocumentHistory(limit: 100)
+        var doc = GraphDocument.defaultDocument()
+        let node = doc.addNode(type: "perlin")
+
+        func drag(_ key: String, ticks: Int, from: Double) {
+            for tick in 0..<ticks {
+                history.record(doc, coalescingKey: key)
+                doc.setParam(nodeId: node, key: "frequency", value: from + Double(tick))
+            }
+        }
+
+        drag("param:\(node).frequency", ticks: 40, from: 1)
+        expect(history.undoDepthForTesting == 1,
+               "a 40-tick drag should record one undo step, got \(history.undoDepthForTesting)")
+
+        // Releasing and dragging again is a second, separately undoable edit.
+        history.endCoalescing()
+        drag("param:\(node).frequency", ticks: 25, from: 100)
+        expect(history.undoDepthForTesting == 2,
+               "a second drag should add one more step, got \(history.undoDepthForTesting)")
+
+        // A different control always starts its own step.
+        history.record(doc, coalescingKey: "param:\(node).octaves")
+        expect(history.undoDepthForTesting == 3,
+               "a different parameter should start a new step")
+
+        // Structural edits never coalesce.
+        history.record(doc)
+        history.record(doc)
+        expect(history.undoDepthForTesting == 5,
+               "unkeyed edits must always record, got \(history.undoDepthForTesting)")
+
+        // Each coalesced group must undo to the state before that gesture.
+        expect(history.canUndo, "history should be undoable")
+        var cursor = doc
+        for _ in 0..<5 {
+            guard let previous = history.undo(current: cursor) else {
+                expect(false, "undo ran out early")
+                break
+            }
+            cursor = previous
+        }
+        expect(!history.canUndo, "five recorded steps should undo exactly five times")
+        expect(history.canRedo, "undone steps should be redoable")
+        print("✓ continuous parameter edits coalesce into one undo step")
+    }
+
     // The encoded-document memo is keyed on a revision bumped by the document's
     // `didSet`. If any mutation path ever stopped bumping it, the model would
     // hand stale JSON to the evaluator and to diagnostics — the terrain would
@@ -741,6 +792,24 @@ func runViewerSelfTests() -> Int32 {
         expect(afterUndo == afterParam,
                "undo must invalidate the memo and restore the prior encoding")
         print("✓ encoded-document memo tracks every document mutation")
+
+        // End to end: a drag is many apply() calls, and one undo must return to
+        // the value from before the drag started, not to the previous tick.
+        func erodibility() -> Double? {
+            model.document.node(id: "carve")?.params["erodibility"]
+        }
+        model.endParameterEdit()
+        let beforeDrag = erodibility()
+        for tick in 1...30 {
+            model.apply(nodeId: "carve", param: "erodibility",
+                        value: 0.1 + Double(tick) * 0.01)
+        }
+        expect(erodibility() != beforeDrag, "the simulated drag should change the value")
+        model.endParameterEdit()
+        model.undo()
+        expect(erodibility() == beforeDrag,
+               "one undo should revert a whole drag, got \(String(describing: erodibility()))")
+        print("✓ one undo reverts an entire parameter drag")
     } else {
         expect(false, "Metal renderer unavailable for encoded-document memo test")
     }
