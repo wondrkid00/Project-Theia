@@ -387,8 +387,9 @@ func runViewerSelfTests() -> Int32 {
         var decoded = try JSONDecoder().decode(GraphDocument.self,
                                                from: Data(encoded.utf8))
         decoded.ensureLayout()
-        expect(decoded.formatVersion == 2 && decoded.sinkOutput == "ridge",
-               "v2 round-trip should preserve selected output")
+        expect(decoded.formatVersion == GraphDocument.currentFormatVersion &&
+               decoded.sinkOutput == "ridge",
+               "current-format round-trip should preserve selected output")
         expect(decoded.connections.first?.output == "terrain",
                "v2 round-trip should preserve edge source port")
     } catch {
@@ -497,8 +498,9 @@ func runViewerSelfTests() -> Int32 {
         }
         """.utf8))
         migrated.ensureLayout()
-        expect(migrated.formatVersion == 2 && migrated.sinkOutput == "mask",
-               "v1 sink should migrate to its default named output")
+        expect(migrated.formatVersion == GraphDocument.currentFormatVersion &&
+               migrated.sinkOutput == "mask",
+               "v1 sink should migrate to the current named-output format")
         expect(migrated.connections.first?.output == "terrain",
                "v1 edge should migrate to source default output")
         expect(migrated.maskEraseStrokes(nodeId: "river", output: "mask").count == 1,
@@ -517,7 +519,11 @@ func runViewerSelfTests() -> Int32 {
           "sinkOutput": "height",
           "nodes": [
             { "id": "base", "type": "perlin", "params": {} },
-            { "id": "filter", "type": "blur", "params": {} }
+            { "id": "filter", "type": "blur", "params": {} },
+            { "id": "legacyRiver", "type": "river",
+              "params": { "width": 2.0 } },
+            { "id": "worldUnitRiver", "type": "river",
+              "params": { "width": 4.0, "terrainSize": 1024.0 } }
           ],
           "connections": [
             { "from": "base", "output": "height", "to": "filter", "input": 0 }
@@ -529,8 +535,9 @@ func runViewerSelfTests() -> Int32 {
         let encoded = try migrated.encodedString()
         let root = try JSONSerialization.jsonObject(
             with: Data(encoded.utf8)) as? [String: Any]
-        expect(root?["formatVersion"] as? Int == 3,
-               "documents should round-trip as formatVersion 3")
+        expect(migrated.formatVersion == GraphDocument.currentFormatVersion &&
+               root?["formatVersion"] as? Int == GraphDocument.currentFormatVersion,
+               "documents should normalize to the current formatVersion")
         expect(root?["sinkOutput"] as? String == "terrain",
                "legacy height sink should normalize to terrain")
         let connections = root?["connections"] as? [[String: Any]]
@@ -538,10 +545,15 @@ func runViewerSelfTests() -> Int32 {
                "legacy height edge should normalize to terrain")
         expect(root?["retiredExtension"] == nil,
                "unsupported legacy extension fields should be discarded")
+        let migratedWidth = migrated.node(id: "legacyRiver")?.params["width"] ?? -1
+        expect(abs(migratedWidth - 2.0 * 1024.0 / 31.0) < 1e-9,
+               "legacy Material Stack v3 River width should migrate from cells")
+        expect(migrated.node(id: "worldUnitRiver")?.params["width"] == 4.0,
+               "world-unit v3 River width should not migrate twice")
     } catch {
         expect(false, "v3 compatibility migration failed: \(error)")
     }
-    print("✓ graph v3 compatibility migration")
+    print("✓ graph v3 compatibility and River-width migration")
 
     var duplicateInputs = GraphDocument.emptyDocument(width: 32, height: 32)
     let duplicateTerrain = duplicateInputs.addNode(type: "perlin")

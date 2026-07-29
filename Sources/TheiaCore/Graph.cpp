@@ -16,6 +16,10 @@ namespace theia {
 
 namespace {
 
+constexpr std::uint32_t kCurrentGraphFormatVersion = 4;
+constexpr std::uint32_t kRiverWorldWidthFormatVersion = 4;
+constexpr double kLegacyRiverWidthCells = 2.0;
+
 bool nearlyEqual(double a, double b) {
     return std::abs(a - b) < 1e-9;
 }
@@ -40,22 +44,33 @@ void migrateLegacyCellSize(Node& n, std::uint32_t documentWidth) {
     n.params.set("terrainSize", cellSize * intervals);
 }
 
-// `river.width` moved from cells to world units in formatVersion 3. Unlike the
+// `river.width` moved from cells to world units in formatVersion 4. Unlike the
 // `cellSize` migration there is no removed key to detect, because `width`
 // exists in both schemas — the document's formatVersion is the signal.
 void migrateLegacyRiverWidth(Node& n, std::uint32_t documentWidth,
-                             std::uint32_t formatVersion) {
-    if (formatVersion >= 3) return;
+                             std::uint32_t formatVersion,
+                             bool widthWasAuthored,
+                             bool terrainSizeWasAuthored) {
+    if (formatVersion >= kRiverWorldWidthFormatVersion) return;
     if (n.type() != "river") return;
-    const double terrainSize = n.params.get("terrainSize", 1024.0);
-    auto legacy = n.params.values.find("width");
-    if (legacy == n.params.values.end()) return;
-    const double widthCells = legacy->second;
+    // A short-lived build emitted v3 after introducing world-unit River
+    // widths. Those files can be distinguished from older Material Stack v3
+    // documents because River did not previously serialize terrainSize.
+    if (formatVersion == 3 && terrainSizeWasAuthored) return;
+    const double authoredTerrainSize = n.params.get("terrainSize", 1024.0);
+    const double terrainSize =
+        std::isfinite(authoredTerrainSize) && authoredTerrainSize > 0.0
+            ? authoredTerrainSize : 1024.0;
+    const double widthCells = widthWasAuthored
+        ? n.params.get("width", kLegacyRiverWidthCells)
+        : kLegacyRiverWidthCells;
     // An unusable authored width falls back to the node default rather than
     // propagating a degenerate channel into the mask.
-    if (!std::isfinite(widthCells) || widthCells <= 0.0) return;
+    const double safeWidthCells =
+        std::isfinite(widthCells) && widthCells > 0.0
+            ? widthCells : kLegacyRiverWidthCells;
     const double intervals = std::max(1u, documentWidth - 1);
-    n.params.set("width", widthCells * terrainSize / intervals);
+    n.params.set("width", safeWidthCells * terrainSize / intervals);
 }
 
 void migrateLegacySlopeMaskDefaults(Node& n) {
@@ -589,7 +604,7 @@ void Graph::setDefaults(const std::string& sink, std::uint32_t w, std::uint32_t 
 
 std::string Graph::toJSON() const {
     json j;
-    j["formatVersion"] = 3;
+    j["formatVersion"] = kCurrentGraphFormatVersion;
     j["resolution"] = {{"width", defaultWidth_}, {"height", defaultHeight_}};
     if (!defaultSink_.empty()) {
         j["sink"] = defaultSink_;
@@ -699,10 +714,10 @@ bool Graph::fromJSON(const std::string& text, std::string& error) {
     std::uint32_t formatVersion = 1;
     if (j.contains("formatVersion")) {
         if (!readOptionalU32(j, "formatVersion", formatVersion, "graph")) return false;
-        // Version 3 documents may have been written by an older Theia build.
-        // Its unsupported extension fields are intentionally ignored, and the
-        // document is normalized to the current version when serialized.
-        if (formatVersion < 1 || formatVersion > 3) {
+        // Version 3 documents may have been written by the retired Material
+        // Stack build. Its unsupported extension fields are intentionally
+        // ignored, and the document is normalized when serialized.
+        if (formatVersion < 1 || formatVersion > kCurrentGraphFormatVersion) {
             error = "unsupported graph formatVersion " + std::to_string(formatVersion);
             return false;
         }
@@ -760,6 +775,8 @@ bool Graph::fromJSON(const std::string& text, std::string& error) {
             if (!readString(jn, "type", type, "node '" + id + "'")) return false;
             Node* n = next.addNode(id, type, error);
             if (!n) return false;
+            bool riverWidthWasAuthored = false;
+            bool riverTerrainSizeWasAuthored = false;
             if (jn.contains("params")) {
                 if (!jn["params"].is_object()) {
                     error = "node '" + id + "' params must be an object";
@@ -773,9 +790,14 @@ bool Graph::fromJSON(const std::string& text, std::string& error) {
                     }
                     n->params.set(it.key(), it.value().get<double>());
                 }
+                riverWidthWasAuthored = jn["params"].contains("width");
+                riverTerrainSizeWasAuthored =
+                    jn["params"].contains("terrainSize");
             }
             migrateLegacyCellSize(*n, next.defaultWidth_);
-            migrateLegacyRiverWidth(*n, next.defaultWidth_, formatVersion);
+            migrateLegacyRiverWidth(*n, next.defaultWidth_, formatVersion,
+                                    riverWidthWasAuthored,
+                                    riverTerrainSizeWasAuthored);
             migrateLegacySlopeMaskDefaults(*n);
         }
     }

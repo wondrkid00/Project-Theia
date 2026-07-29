@@ -514,7 +514,7 @@ h.test("River mask width is stable across sampling resolutions") {
 }
 
 h.test("Legacy river width migrates from cells to world units") {
-    // A pre-v3 document authored `width` in cells. Migration converts it at the
+    // A pre-v4 document authored `width` in cells. Migration converts it at the
     // document's OWN declared resolution, which reproduces that document's
     // channel exactly there and makes every other resolution agree with it.
     let riverWidth = { @MainActor (json: String) -> Double in
@@ -526,8 +526,13 @@ h.test("Legacy river width migrates from cells to world units") {
         h.expect(theia.graph_load_json_text(g, json), "load: \(graphError(g))")
         return theia.graph_param_value(g, "rivers", "width", -1)
     }
-    func legacyJSON(formatVersion: Int?, resolution: Int, width: Double) -> String {
+    func legacyJSON(formatVersion: Int?, resolution: Int, width: Double,
+                    terrainSize: Double? = nil) -> String {
         let versionLine = formatVersion.map { "\"formatVersion\": \($0)," } ?? ""
+        var params = ["\"width\": \(width)"]
+        if let terrainSize {
+            params.append("\"terrainSize\": \(terrainSize)")
+        }
         return """
         {
           \(versionLine)
@@ -535,7 +540,8 @@ h.test("Legacy river width migrates from cells to world units") {
           "sink": "rivers",
           "nodes": [
             { "id": "p", "type": "perlin", "params": {} },
-            { "id": "rivers", "type": "river", "params": { "width": \(width) } }
+            { "id": "rivers", "type": "river",
+              "params": { \(params.joined(separator: ", ")) } }
           ],
           "connections": [ { "from": "p", "to": "rivers", "input": 0 } ]
         }
@@ -556,9 +562,23 @@ h.test("Legacy river width migrates from cells to world units") {
     h.expect(abs(v1 - 2.0 * 1024.0 / 511.0) < 1e-9,
              "an unversioned document should migrate as v1: \(v1)")
 
-    // v3 already stores world units and must be left alone.
-    let v3 = riverWidth(legacyJSON(formatVersion: 3, resolution: 512, width: 4.0))
-    h.expect(v3 == 4.0, "a v3 river width must not be migrated again: \(v3)")
+    // Material Stack v3 still authored width in cells and must migrate.
+    let legacyV3 = riverWidth(
+        legacyJSON(formatVersion: 3, resolution: 512, width: 2.0))
+    h.expect(abs(legacyV3 - 2.0 * 1024.0 / 511.0) < 1e-9,
+             "a legacy v3 river width should convert: \(legacyV3)")
+
+    // Preserve files from the short-lived world-unit v3 build. Its River nodes
+    // are identifiable by the newly serialized terrainSize parameter.
+    let worldUnitV3 = riverWidth(
+        legacyJSON(formatVersion: 3, resolution: 512, width: 4.0,
+                   terrainSize: 1024.0))
+    h.expect(worldUnitV3 == 4.0,
+             "a world-unit v3 river width must not migrate twice: \(worldUnitV3)")
+
+    // v4 is unambiguously world-unit based.
+    let v4 = riverWidth(legacyJSON(formatVersion: 4, resolution: 512, width: 4.0))
+    h.expect(v4 == 4.0, "a v4 river width must remain unchanged: \(v4)")
 
     // Migrating twice would compound the conversion, so a saved-and-reloaded
     // document must be stable.
@@ -2881,7 +2901,7 @@ h.test("Graph format v1 migrates through v2 with default ports and output-scoped
         h.expect(false, "saved v2 JSON did not parse")
         return
     }
-    h.expect(root["formatVersion"] as? Int == 3, "formatVersion should be 3")
+    h.expect(root["formatVersion"] as? Int == 4, "formatVersion should be 4")
     h.expect(root["sinkOutput"] as? String == "mask", "migrated sinkOutput")
     let edges = root["connections"] as? [[String: Any]] ?? []
     h.expect(edges.first?["output"] as? String == "terrain",
@@ -2895,7 +2915,7 @@ h.test("Graph format v1 migrates through v2 with default ports and output-scoped
              "mask edits attached to terrain outputs should be discarded")
 }
 
-h.test("Legacy graph format v3 loads and normalizes to v2") {
+h.test("Legacy graph format v3 loads and normalizes to v4") {
     let legacy = """
     {
       "formatVersion": 3,
@@ -2920,8 +2940,8 @@ h.test("Legacy graph format v3 loads and normalizes to v2") {
         h.expect(false, "migrated v3 JSON did not parse")
         return
     }
-    h.expect(root["formatVersion"] as? Int == 3,
-             "v3 input should round-trip as formatVersion 3")
+    h.expect(root["formatVersion"] as? Int == 4,
+             "v3 input should round-trip as formatVersion 4")
     h.expect(root["sinkOutput"] as? String == "terrain",
              "legacy height sink should normalize to terrain")
     h.expect(root["retiredExtension"] == nil,
@@ -4019,4 +4039,3 @@ h.test("Fluvial rejects non-finite parameters") {
 
 print("\n\(h.checks) checks, \(h.failures) failure(s)")
 exit(h.failures == 0 ? 0 : 1)
-

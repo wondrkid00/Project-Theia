@@ -247,13 +247,20 @@ now holds it at every other resolution instead of thinning.
 
 `width` exists in both the old and new schema, so its presence cannot signal a
 legacy document the way a removed `cellSize` key could. The document's
-`formatVersion` is used instead: the loader already parses it ahead of the node
-list and accepts 1–3, so the writer moves to 3 and documents below 3 are
-migrated at their own declared resolution:
+`formatVersion` is used instead. Version 3 was already emitted by the retired
+Material Stack build, so reusing it would make those legacy files look current
+and skip the width conversion. The loader therefore accepts versions 1–4, the
+writer moves to 4, and documents below 4 are migrated at their own declared
+resolution:
 
 ```
 width_world = width_cells * terrainSize / max(documentWidth - 1, 1)
 ```
+
+A short-lived development build emitted v3 after adopting world-unit River
+widths. Its River nodes serialized the newly added `terrainSize` parameter,
+whereas the older Material Stack v3 nodes did not. The loader uses that marker
+only for v3 to preserve both forms without double conversion.
 
 As with the `cellSize` migration, this reproduces each legacy document exactly
 at its own declared grid while making every other grid agree with it.

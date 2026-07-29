@@ -329,6 +329,8 @@ private final class NodeTypeMetadataCache: @unchecked Sendable {
 }
 
 struct GraphDocument: Codable {
+    static let currentFormatVersion = 4
+    static let riverWorldWidthFormatVersion = 4
     static let defaultResolution: UInt32 = 1024
 
     var formatVersion: Int
@@ -343,7 +345,7 @@ struct GraphDocument: Codable {
         case formatVersion, resolution, sink, sinkOutput, nodes, connections, ui
     }
 
-    init(formatVersion: Int = 3,
+    init(formatVersion: Int = currentFormatVersion,
          resolution: GraphResolution,
          sink: String,
          sinkOutput: String = "",
@@ -369,9 +371,10 @@ struct GraphDocument: Codable {
         sinkOutput = try c.decodeIfPresent(String.self, forKey: .sinkOutput) ?? ""
         nodes = try c.decodeIfPresent([GraphDocumentNode].self, forKey: .nodes) ?? []
         connections = try c.decodeIfPresent([GraphDocumentConnection].self, forKey: .connections) ?? []
-        // Accept v3 as a legacy input format. Codable ignores extension fields
-        // that are no longer supported, and encoding normalizes the file to v2.
-        guard (1...3).contains(formatVersion) else {
+        // v3 belonged to the retired Material Stack build. Codable ignores its
+        // unsupported extension fields; encoding normalizes every accepted
+        // document to the current format.
+        guard (1...Self.currentFormatVersion).contains(formatVersion) else {
             throw DecodingError.dataCorruptedError(forKey: .formatVersion, in: c,
                 debugDescription: "unsupported graph formatVersion \(formatVersion)")
         }
@@ -380,7 +383,7 @@ struct GraphDocument: Codable {
 
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
-        try c.encode(3, forKey: .formatVersion)
+        try c.encode(Self.currentFormatVersion, forKey: .formatVersion)
         try c.encode(resolution, forKey: .resolution)
         if !sink.isEmpty {
             try c.encode(sink, forKey: .sink)
@@ -396,7 +399,6 @@ struct GraphDocument: Codable {
     static func load(path: String) throws -> GraphDocument {
         let data = try Data(contentsOf: URL(fileURLWithPath: path))
         var doc = try JSONDecoder().decode(GraphDocument.self, from: data)
-        doc.ensureNodeDefaults()
         doc.ensureLayout()
         return doc
     }
@@ -409,7 +411,7 @@ struct GraphDocument: Codable {
 
     static func emptyDocument(width: UInt32 = defaultResolution,
                               height: UInt32 = defaultResolution) -> GraphDocument {
-        GraphDocument(formatVersion: 3,
+        GraphDocument(formatVersion: currentFormatVersion,
                       resolution: GraphResolution(width: width, height: height),
                       sink: "",
                       sinkOutput: "",
@@ -419,8 +421,8 @@ struct GraphDocument: Codable {
     }
 
     mutating func ensureLayout() {
-        formatVersion = 2
         ensureNodeDefaults()
+        formatVersion = Self.currentFormatVersion
         migrateNamedOutputs()
         repairRiverCarveConnections()
         if ui == nil { ui = GraphDocumentUI() }
@@ -482,12 +484,40 @@ struct GraphDocument: Codable {
     }
 
     mutating func ensureNodeDefaults() {
+        let sourceFormatVersion = formatVersion
         for index in nodes.indices {
             let defaults = Self.defaultParams(for: nodes[index].type)
+            let savedParams = nodes[index].params
             nodes[index].params = defaults.merging(nodes[index].params) { _, saved in saved }
+            migrateLegacyRiverWidth(index: index,
+                                    savedParams: savedParams,
+                                    sourceFormatVersion: sourceFormatVersion)
             migrateLegacySlopeMaskDefaults(index: index)
             migrateLegacyRiverMaskParams(index: index)
         }
+        formatVersion = Self.currentFormatVersion
+    }
+
+    private mutating func migrateLegacyRiverWidth(
+        index: Int,
+        savedParams: [String: Double],
+        sourceFormatVersion: Int
+    ) {
+        guard sourceFormatVersion < Self.riverWorldWidthFormatVersion,
+              nodes[index].type == "river" else { return }
+        // Preserve files saved by the short-lived world-unit v3 build. Older
+        // Material Stack v3 River nodes did not serialize terrainSize.
+        if sourceFormatVersion == 3, savedParams["terrainSize"] != nil {
+            return
+        }
+        let widthCells = savedParams["width"] ?? 2.0
+        let safeWidthCells = widthCells.isFinite && widthCells > 0 ? widthCells : 2.0
+        let authoredTerrainSize = nodes[index].params["terrainSize"] ?? 1024.0
+        let terrainSize = authoredTerrainSize.isFinite && authoredTerrainSize > 0
+            ? authoredTerrainSize : 1024.0
+        let sampleIntervals = resolution.width > 1 ? resolution.width - 1 : 1
+        let intervals = Double(sampleIntervals)
+        nodes[index].params["width"] = safeWidthCells * terrainSize / intervals
     }
 
     private mutating func migrateLegacyRiverMaskParams(index: Int) {
