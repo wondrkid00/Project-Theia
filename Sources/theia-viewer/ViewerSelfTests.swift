@@ -808,6 +808,69 @@ func runViewerSelfTests() -> Int32 {
         print("✓ continuous parameter edits coalesce into one undo step")
     }
 
+    // The working resolution had no UI because `previewSize` was fixed at
+    // launch. If a resolution control only wrote `document.resolution` the
+    // preview would keep evaluating at the old grid — a control that silently
+    // does nothing. Assert both move together, and that the choice persists.
+    if let device = MTLCreateSystemDefaultDevice(),
+       let renderer = Renderer(device: device, colorFormat: .bgra8Unorm),
+       let engine = TerrainEngine(graphPath: "examples/fluvial.json") {
+        let model = TerrainModel(engine: engine, renderer: renderer, size: 128)
+        expect(model.previewSize == 128, "the model should start at its launch size")
+
+        model.setWorkingResolution(256)
+        expect(model.previewSize == 256,
+               "setting the working resolution must move the evaluated grid")
+        expect(model.documentResolution == 256,
+               "setting the working resolution must persist into the document")
+        expect(!model.previewSizeOverridesDocument,
+               "preview and document should agree after an explicit change")
+        expect(model.isDirty, "changing the working resolution should dirty the document")
+
+        // End to end: the renderer's grid must actually change, which is the
+        // only proof the new resolution reached the evaluator and the viewport.
+        expect(model.refreshTerrainSynchronously(),
+               "the graph should re-evaluate at the new resolution")
+        expect(renderer.gridW == 256 && renderer.gridH == 256,
+               "the rendered grid should follow the working resolution, got "
+               + "\(renderer.gridW)x\(renderer.gridH)")
+
+        // It must survive a save/reload round-trip, since it is a document value.
+        if let encoded = try? model.encodedDocumentText(),
+           let decoded = try? JSONDecoder().decode(GraphDocument.self,
+                                                   from: Data(encoded.utf8)) {
+            expect(decoded.resolution.width == 256 && decoded.resolution.height == 256,
+                   "the working resolution should serialize with the document")
+        } else {
+            expect(false, "the document should encode after a resolution change")
+        }
+
+        // Undo restores the document value, and the live grid must follow it
+        // back — otherwise the viewport keeps rendering at the undone grid.
+        model.undo()
+        expect(model.documentResolution == 512,
+               "undo should restore fluvial.json's stored 512, got "
+               + "\(model.documentResolution)")
+        expect(model.previewSize == model.documentResolution,
+               "undo must move the evaluated grid with the document, got "
+               + "\(model.previewSize) vs \(model.documentResolution)")
+
+        // A launch-time --size that disagrees with the document is reported
+        // rather than silently shown as if it were the stored value.
+        let overridden = TerrainModel(engine: engine, renderer: renderer, size: 64)
+        expect(overridden.previewSizeOverridesDocument,
+               "a --size that differs from the document should be flagged")
+
+        // Choices offered by the picker must be usable, not just decorative.
+        expect(TerrainModel.workingResolutionChoices.contains(1024),
+               "the default working resolution should be offered")
+        expect(TerrainModel.workingResolutionChoices.allSatisfy { $0 >= 2 },
+               "every offered resolution must be evaluable")
+        print("✓ working resolution is editable and moves the evaluated grid")
+    } else {
+        expect(false, "Metal renderer unavailable for working-resolution test")
+    }
+
     // The encoded-document memo is keyed on a revision bumped by the document's
     // `didSet`. If any mutation path ever stopped bumping it, the model would
     // hand stale JSON to the evaluator and to diagnostics — the terrain would

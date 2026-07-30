@@ -37,7 +37,7 @@ struct NodeParameterInspector: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             HStack {
-                Text("Parameters")
+                Text(visibleNodes.isEmpty ? "Graph" : "Parameters")
                     .font(.headline.weight(.semibold))
                 Spacer()
                 Image(systemName: "chevron.up")
@@ -45,11 +45,10 @@ struct NodeParameterInspector: View {
                     .foregroundStyle(.secondary)
             }
 
+            // With no selection the per-node view has nothing to show, so the
+            // panel falls back to document-level settings instead of a stub.
             if visibleNodes.isEmpty {
-                Text(model.document.nodes.isEmpty ? "No nodes" : "No node selected")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .padding(.top, 2)
+                GraphInspector(model: model)
             }
 
             ForEach(visibleNodes) { node in

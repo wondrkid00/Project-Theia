@@ -110,7 +110,10 @@ final class TerrainModel: ObservableObject {
 
     let engine: TerrainEngine
     let renderer: Renderer
-    let size: UInt32
+    /// Grid the preview is evaluated at. Seeded from the document's stored
+    /// resolution (or an explicit `--size`) and editable at runtime through the
+    /// graph inspector, so the working resolution is not frozen at launch.
+    @Published private(set) var previewSize: UInt32
     @Published private(set) var graphPath: String?
     let availableNodeTypes: [String]
     private var documentCanSave = true
@@ -150,6 +153,37 @@ final class TerrainModel: ObservableObject {
 
     func requestAddNodePicker() {
         addNodePickerPresented = true
+    }
+
+    /// Resolutions offered by the graph inspector. Re-evaluating a graph is
+    /// expensive, so the working resolution is a committed choice from this list
+    /// rather than a draggable control.
+    static let workingResolutionChoices: [UInt32] = [256, 512, 1024, 2048, 4096]
+
+    /// The document's stored working resolution, which is what migrations and
+    /// cell-size derivations are measured against.
+    var documentResolution: UInt32 { document.resolution.width }
+
+    /// True when `--size` was used to preview at a grid the document does not
+    /// store, so the inspector can say so rather than showing a value that does
+    /// not match what is on screen.
+    var previewSizeOverridesDocument: Bool {
+        previewSize != 0 && previewSize != document.resolution.width
+    }
+
+    /// Sets the grid the graph is authored and previewed at. Writes the document
+    /// so the choice persists, and re-evaluates so the viewport agrees with it.
+    func setWorkingResolution(_ requested: UInt32) {
+        let value = min(max(requested, 2), 8192)
+        guard value != previewSize || value != document.resolution.width else {
+            return
+        }
+        pushUndo()
+        document.resolution = GraphResolution(width: value, height: value)
+        previewSize = value
+        markDirty()
+        _ = refreshTerrain()
+        reloadInspector()
     }
 
     func selectGraphTab(_ id: String) {
@@ -197,7 +231,7 @@ final class TerrainModel: ObservableObject {
     init(engine: TerrainEngine, renderer: Renderer, size: UInt32) {
         self.engine = engine
         self.renderer = renderer
-        self.size = size
+        self.previewSize = size
         graphPath = engine.graphPath
         availableNodeTypes = readCxxString { theia.node_type_list($0, $1) }
             .split(separator: ",")
@@ -209,7 +243,7 @@ final class TerrainModel: ObservableObject {
         } else {
             document = GraphDocument.defaultDocument()
         }
-        exportSettings.size = size == 0 ? document.resolution.width : size
+        exportSettings.size = previewSize == 0 ? document.resolution.width : previewSize
         previewReference = GraphOutputReference(node: document.sink,
                                                 output: document.sinkOutput)
         loadPreviewSettingsFromDocument()
@@ -528,7 +562,7 @@ final class TerrainModel: ObservableObject {
         previewWorker.submit(jsonText: text,
                              geometry: geometryReference,
                              data: dataReference,
-                             size: size) { [weak self] outcome in
+                             size: previewSize) { [weak self] outcome in
             guard let self,
                   evaluationRevision == self.previewEvaluationRevision else { return }
             self.previewEvaluation = nil
@@ -561,7 +595,7 @@ final class TerrainModel: ObservableObject {
             return true
         }
         let geometryReference = document.terrainReference(for: dataReference) ?? dataReference
-        guard let geometry = engine.evaluate(size: size,
+        guard let geometry = engine.evaluate(size: previewSize,
                                              sink: geometryReference.node,
                                              output: geometryReference.output) else {
             lastStats = engine.lastError()
@@ -571,7 +605,7 @@ final class TerrainModel: ObservableObject {
         if geometryReference == dataReference {
             data = geometry
         } else {
-            guard let evaluatedData = engine.evaluate(size: size,
+            guard let evaluatedData = engine.evaluate(size: previewSize,
                                                       sink: dataReference.node,
                                                       output: dataReference.output) else {
                 lastStats = engine.lastError()
@@ -601,7 +635,7 @@ final class TerrainModel: ObservableObject {
 
     func setFlatPreview(status: String = "flat preview") {
         cancelPreviewEvaluation()
-        let dim = max(2, Int(size == 0 ? document.resolution.width : size))
+        let dim = max(2, Int(previewSize == 0 ? document.resolution.width : previewSize))
         let flat = [Float](repeating: 0, count: dim * dim)
         currentPreviewGeometry = flat
         currentPreviewData = flat
@@ -737,6 +771,37 @@ final class TerrainModel: ObservableObject {
         previewReference = GraphOutputReference(node: "", output: "")
         setMaskBrushEnabled(false)
         setFlatPreview(status: document.nodes.isEmpty ? "empty graph" : "no selection")
+    }
+
+    /// Every output port in the graph, as the graph inspector's sink picker
+    /// needs them: a flat, stable list of `node.port` references.
+    var selectableGraphOutputs: [GraphOutputReference] {
+        document.nodes.flatMap { node in
+            GraphDocument.outputPorts(for: node.type).map {
+                GraphOutputReference(node: node.id, output: $0.name)
+            }
+        }
+    }
+
+    /// Repoints the graph output directly, without needing the sink node to be
+    /// found and selected first.
+    func setGraphOutput(_ reference: GraphOutputReference) {
+        guard document.node(id: reference.node) != nil else { return }
+        if document.sink == reference.node &&
+            document.sinkOutput == reference.output { return }
+        pushUndo()
+        document.setSink(nodeId: reference.node, output: reference.output)
+        if !activeOutputSupportsMesh { exportSettings.exportMesh = false }
+        documentCanSave = true
+        markDirty()
+        // Preview the new sink, but deliberately leave the selection alone:
+        // selecting the node here would swap the inspector away from the graph
+        // panel the user is working in.
+        previewReference = reference
+        transientDisplayMode = nil
+        markDirty()
+        _ = refreshTerrain()
+        refreshDiagnostics()
     }
 
     func setPreviewAsGraphOutput() {
@@ -1165,6 +1230,12 @@ final class TerrainModel: ObservableObject {
         let previousTransientMode = transientDisplayMode
         document = snapshot
         document.ensureLayout()
+        // The working resolution lives in the document, so undo/redo has to move
+        // the evaluated grid with it. Without this the viewport would keep
+        // rendering at the grid from before the undo.
+        if document.resolution.width >= 2 {
+            previewSize = document.resolution.width
+        }
         loadPreviewSettingsFromDocument()
         let previewSurvives = document.node(id: previousPreview.node) != nil &&
             document.outputPorts(nodeId: previousPreview.node).contains(where: {
