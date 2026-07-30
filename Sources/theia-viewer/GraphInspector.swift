@@ -148,15 +148,15 @@ struct GraphInspector: View {
                             model.setWorkingResolution(choice)
                         } label: {
                             if choice == model.previewSize {
-                                Label("\(choice) × \(choice)", systemImage: "checkmark")
+                                Label(Self.gridLabel(choice), systemImage: "checkmark")
                             } else {
-                                Text("\(choice) × \(choice)")
+                                Text(Self.gridLabel(choice))
                             }
                         }
                     }
                 } label: {
                     HStack(spacing: 6) {
-                        Text("\(model.previewSize)")
+                        Text(String(model.previewSize))
                             .font(.system(size: 12, weight: .semibold).monospacedDigit())
                         Spacer(minLength: 2)
                         Image(systemName: "chevron.up.chevron.down")
@@ -180,13 +180,20 @@ struct GraphInspector: View {
                 .foregroundStyle(.secondary)
 
             if model.previewSizeOverridesDocument {
-                Text("Previewing at \(model.previewSize) via --size; "
-                     + "the document stores \(model.documentResolution).")
+                Text("Previewing at \(String(model.previewSize)) via --size; "
+                     + "the document stores \(String(model.documentResolution)).")
                     .font(.system(size: 11))
                     .foregroundStyle(.orange.opacity(0.9))
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
+    }
+
+    /// Resolutions are identifiers, not measurements: interpolating a UInt32
+    /// into a SwiftUI Text applies locale grouping, which renders 1024 as
+    /// "1.024" in locales that group with a period.
+    static func gridLabel(_ value: UInt32) -> String {
+        "\(String(value)) × \(String(value))"
     }
 
     /// Spells out the derived spacing, which is what every world-scaled node

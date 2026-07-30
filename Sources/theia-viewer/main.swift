@@ -4,6 +4,8 @@
 //   theia-viewer [GRAPH.json]            open an interactive window
 //   theia-viewer --shot OUT.png [GRAPH]  render one frame offscreen and exit
 //   theia-viewer --size N                evaluate at N x N (default 1024)
+//   theia-viewer --shot-size N           offscreen render width (default 1200)
+//   theia-viewer --no-chrome             omit the grid/axes overlay from --shot
 //   theia-viewer --smoke                 open + auto-close (build/launch self-test)
 //   Saving GRAPH.json while the window is open hot-reloads the terrain.
 //
@@ -21,6 +23,8 @@ struct Args {
     var size: UInt32 = 0      // 0 => document resolution (new graphs use 1024)
     var smoke = false
     var selfTest = false
+    var shotSize: Int = 0        // 0 => default 1200x800
+    var shotChrome = true       // grid + axes overlay in offscreen renders
     // optional camera overrides (mainly for --shot verification)
     var azimuth: Float?
     var elevation: Float?
@@ -39,6 +43,8 @@ func parseArgs() -> Args {
         case "--az": if let v = nextFloat() { a.azimuth = v * .pi / 180; i += 1 }
         case "--el": if let v = nextFloat() { a.elevation = v * .pi / 180; i += 1 }
         case "--dist": if let v = nextFloat() { a.distance = v; i += 1 }
+        case "--shot-size": if i + 1 < argv.count { a.shotSize = Int(argv[i + 1]) ?? 0; i += 1 }
+        case "--no-chrome": a.shotChrome = false
         case "--smoke": a.smoke = true
         case "--self-test": a.selfTest = true
         default:
@@ -206,7 +212,13 @@ if let shot = args.shotPath {
     guard model.refreshTerrainSynchronously() else {
         fail("snapshot preview failed: \(engine.lastError())")
     }
-    let ok = renderer.renderToPNG(path: shot, width: 1200, height: 800)
+    // Marketing and documentation renders want the terrain alone; the editor
+    // grid and axes are viewport chrome, not part of the result.
+    renderer.gridVisible = args.shotChrome
+    renderer.axisVisible = args.shotChrome
+    let shotWidth = args.shotSize > 0 ? args.shotSize : 1200
+    let shotHeight = args.shotSize > 0 ? Int(Double(args.shotSize) * 2.0 / 3.0) : 800
+    let ok = renderer.renderToPNG(path: shot, width: shotWidth, height: shotHeight)
     print(ok ? "✅ wrote \(shot)" : "❌ offscreen render failed")
     exit(ok ? 0 : 1)
 }

@@ -861,6 +861,15 @@ func runViewerSelfTests() -> Int32 {
         expect(overridden.previewSizeOverridesDocument,
                "a --size that differs from the document should be flagged")
 
+        // Resolutions are identifiers, not measurements. Interpolating the
+        // integer straight into a SwiftUI Text applies locale grouping, which
+        // rendered 1024 as "1.024" in period-grouping locales.
+        expect(GraphInspector.gridLabel(1024) == "1024 × 1024",
+               "resolution labels must not be locale-grouped, got "
+               + GraphInspector.gridLabel(1024))
+        expect(!GraphInspector.gridLabel(2048).contains(","),
+               "resolution labels must not contain a thousands separator")
+
         // Choices offered by the picker must be usable, not just decorative.
         expect(TerrainModel.workingResolutionChoices.contains(1024),
                "the default working resolution should be offered")
