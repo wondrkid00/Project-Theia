@@ -1,0 +1,12 @@
+{ "formatVersion": 4, "resolution": { "width": 1024, "height": 1024 },
+  "sink": "carve", "sinkOutput": "terrain",
+  "nodes": [
+    { "id": "base", "type": "perlin", "params": { "seed": 4411, "frequency": 2.2, "octaves": 6 } },
+    { "id": "net", "type": "river", "params": { "seed": 88, "water": 0.7, "width": 5.0, "headwaters": 28 } },
+    { "id": "carve", "type": "rivercarve", "params": { "depth": 0.5, "downcutting": 0.6 } }
+  ],
+  "connections": [
+    { "from": "base", "to": "net", "input": 0 },
+    { "from": "base", "to": "carve", "input": 0 },
+    { "from": "net", "output": "mask", "to": "carve", "input": 1 }
+  ] }

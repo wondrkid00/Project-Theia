@@ -1,0 +1,6 @@
+{ "formatVersion": 4, "resolution": { "width": 1024, "height": 1024 },
+  "sink": "v", "sinkOutput": "terrain",
+  "nodes": [ { "id": "v", "type": "volcano", "params": {
+    "seed": 771, "scale": 0.9, "height": 1.0, "mouth": 0.6, "calderaDepth": 0.6,
+    "bulk": 0.72, "radialErosion": 0.6, "roughness": 0.3, "surroundings": 0.5 } } ],
+  "connections": [] }

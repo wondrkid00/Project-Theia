@@ -1,0 +1,11 @@
+{ "formatVersion": 4, "resolution": { "width": 1024, "height": 1024 },
+  "sink": "erode", "sinkOutput": "terrain",
+  "nodes": [
+    { "id": "range", "type": "mountainrange", "params": {
+      "seed": 2471, "scale": 0.62, "height": 0.95, "length": 1.5, "width": 0.3,
+      "direction": 28, "peaks": 7, "peakVariation": 0.72, "arc": 0.42,
+      "sinuosity": 0.55, "roughness": 0.45, "warp": 0.3, "surroundings": 0.55 } },
+    { "id": "erode", "type": "fluvial", "params": {
+      "iterations": 90, "erodibility": 0.62, "deposition": 1.1, "diffusion": 0.35 } }
+  ],
+  "connections": [ { "from": "range", "to": "erode", "input": 0 } ] }

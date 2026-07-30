@@ -1,0 +1,9 @@
+{ "formatVersion": 4, "resolution": { "width": 1024, "height": 1024 },
+  "sink": "t", "sinkOutput": "terrain",
+  "nodes": [
+    { "id": "h", "type": "rollinghills", "params": {
+      "seed": 1204, "scale": 0.7, "height": 0.62, "softness": 0.7,
+      "undulation": 0.5, "warp": 0.2, "detail": 0.7 } },
+    { "id": "t", "type": "thermal", "params": { "iterations": 30 } }
+  ],
+  "connections": [ { "from": "h", "to": "t", "input": 0 } ] }

@@ -1,0 +1,307 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Theia — a native terrain studio for macOS</title>
+<meta name="description" content="Theia is an open-source, node-based procedural terrain generator for macOS. Build landscapes with a visual node graph, shape them with real erosion models, and export heightmaps and meshes for your engine.">
+<link rel="icon" href="assets/logo/favicon.svg" type="image/svg+xml">
+<meta property="og:title" content="Theia — a native terrain studio for macOS">
+<meta property="og:description" content="Shape worlds. Build them node by node. Open-source procedural terrain generation, native to Apple Silicon and Metal.">
+<meta property="og:image" content="assets/img/hero.png">
+<meta property="og:type" content="website">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/css/style.css">
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-inner">
+    <a class="brand" href="#top">
+      <span class="mark" id="brand-mark"></span>
+      <span>Theia</span>
+    </a>
+    <div class="nav-links">
+      <a href="#editor">Editor</a>
+      <a href="#gallery">Gallery</a>
+      <a href="#erosion">Erosion</a>
+      <a href="#start">Get started</a>
+    </div>
+    <a class="btn btn-primary" href="https://github.com/wondrkid00/Project-Theia">GitHub</a>
+  </div>
+</nav>
+
+<header class="hero" id="top">
+  <div class="hero-bg">
+    <img src="assets/img/hero.png"
+         alt="An eroded mountain range generated in Theia, showing branching valley networks cut by fluvial erosion">
+  </div>
+
+  <div class="hero-inner wrap">
+    <span class="badge"><span class="dot"></span> Alpha · macOS · Apple Silicon</span>
+    <h1>Shape worlds,<br><em>node by node.</em></h1>
+    <p class="lede">
+      Theia is a native terrain studio for macOS. Turn procedural ideas into
+      landscapes through a visual node graph — generate mountains, carve rivers,
+      erode slopes, and export the result for your engine.
+    </p>
+    <div class="hero-cta">
+      <a class="btn btn-primary" href="#start">Get started</a>
+      <a class="btn btn-ghost" href="#gallery">See what it makes</a>
+    </div>
+  </div>
+
+  <div class="scroll-cue">Scroll <span>↓</span></div>
+</header>
+
+<section class="specs band-tight">
+  <div class="wrap">
+    <dl class="specs-grid">
+      <div class="spec"><dt>Runs on</dt><dd>macOS 14 · Apple Silicon</dd></div>
+      <div class="spec"><dt>Rendering</dt><dd>Metal compute</dd></div>
+      <div class="spec"><dt>Exports</dt><dd>PNG16 · R16 · PFM32 · OBJ</dd></div>
+      <div class="spec"><dt>Licence</dt><dd>Open source</dd></div>
+    </dl>
+  </div>
+</section>
+
+<section class="band" id="editor">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <p class="eyebrow">The editor</p>
+      <h2>One window. The whole <em>terrain workflow.</em></h2>
+      <p class="section-lede">
+        A 3D viewport above, the node graph below, and every parameter of the
+        selected node to the right. Drag a slider and the landscape re-renders
+        while you watch.
+      </p>
+    </div>
+    <div class="shot reveal">
+      <img src="assets/img/editor.png"
+           alt="The Theia editor: a 3D terrain viewport, a node graph containing a terrain node feeding a fluvial erosion node, and a parameter inspector">
+    </div>
+  </div>
+</section>
+
+<section class="band" style="padding-top:0">
+  <div class="wrap">
+    <div class="features">
+      <div class="card reveal">
+        <div class="glyph">◫</div>
+        <h3>Build with nodes</h3>
+        <p>Combine terrain primitives, filters, erosion, rivers, masks and
+           transforms without locking your terrain into a single recipe.</p>
+      </div>
+      <div class="card reveal">
+        <div class="glyph">≋</div>
+        <h3>Shape with natural processes</h3>
+        <p>Hydraulic, thermal, droplet and fluvial erosion produce landforms with
+           believable drainage structure rather than layered noise.</p>
+      </div>
+      <div class="card reveal">
+        <div class="glyph">◐</div>
+        <h3>See every output</h3>
+        <p>Preview terrain, masks, analysis data, normals, slopes and shaded
+           surfaces directly in the viewport.</p>
+      </div>
+      <div class="card reveal">
+        <div class="glyph">⤓</div>
+        <h3>Export clean assets</h3>
+        <p>Write 16-bit heightmaps, RAW terrain data, PFM fields and OBJ meshes
+           ready to drop into an engine.</p>
+      </div>
+      <div class="card reveal">
+        <div class="glyph">⌘</div>
+        <h3>Native, not ported</h3>
+        <p>Built for Apple Silicon and powered by Metal, so terrain creation
+           stays fast, interactive and entirely on your Mac.</p>
+      </div>
+      <div class="card reveal">
+        <div class="glyph">⎌</div>
+        <h3>Non-destructive</h3>
+        <p>Every node keeps its parameters live. Change the mountain and the
+           erosion, rivers and masks downstream follow.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="band" id="gallery" style="padding-top:0">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <p class="eyebrow">Gallery</p>
+      <h2>Every image here is <em>Theia output.</em></h2>
+      <p class="section-lede">
+        Rendered straight from the app with the graphs included in this
+        repository — no retouching, no external renderer.
+      </p>
+    </div>
+
+    <div class="gallery">
+      <figure class="tile reveal">
+        <img src="assets/img/peaks.png" alt="An eroded mountain massif with valleys radiating from a snow-capped summit">
+        <figcaption><b>Alpine massif</b> · <span>mountain → fluvial</span></figcaption>
+      </figure>
+      <figure class="tile reveal">
+        <img src="assets/img/caldera.png" alt="A volcanic cone with a collapsed caldera and radial gullies down its flanks">
+        <figcaption><b>Caldera</b> · <span>volcano</span></figcaption>
+      </figure>
+      <figure class="tile reveal">
+        <img src="assets/img/rivers.png" alt="River valleys carved through eroded terrain by a traced river network">
+        <figcaption><b>River valleys</b> · <span>perlin → river → rivercarve</span></figcaption>
+      </figure>
+      <figure class="tile reveal">
+        <img src="assets/img/downs.png" alt="Soft rolling hills smoothed by thermal erosion">
+        <figcaption><b>Rolling downs</b> · <span>rollinghills → thermal</span></figcaption>
+      </figure>
+    </div>
+  </div>
+</section>
+
+<section class="band" id="erosion" style="padding-top:0">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <p class="eyebrow">Erosion</p>
+      <h2>Landforms from <em>published models.</em></h2>
+      <p class="section-lede">
+        Theia's erosion isn't a look-alike filter. Each solver is derived from
+        the geomorphology literature and kept in a research note beside the code,
+        so what the parameters mean is written down.
+      </p>
+    </div>
+
+    <div class="notes">
+      <article class="note reveal">
+        <h3>Fluvial incision</h3>
+        <p>Channels cut in proportion to upstream drainage area and slope, which
+           is what makes valley networks branch instead of appearing everywhere
+           at once.</p>
+        <div class="cite">E = K·A<sup>m</sup>·S<sup>n</sup> — stream power incision</div>
+      </article>
+      <article class="note reveal">
+        <h3>Hillslope transport</h3>
+        <p>Slopes round off and steepen toward a critical angle rather than
+           smoothing uniformly, which keeps ridges sharp and valley walls
+           plausible.</p>
+        <div class="cite">q<sub>s</sub> = K<sub>d</sub>·S / (1 − (S/S<sub>c</sub>)²) — nonlinear creep</div>
+      </article>
+      <article class="note reveal">
+        <h3>Flow routing</h3>
+        <p>Water is distributed across every downhill neighbour and depressions
+           are filled before routing, so flow reaches an outlet instead of
+           stalling in pits.</p>
+        <div class="cite">Multiple-flow-direction accumulation · priority-flood conditioning</div>
+      </article>
+      <article class="note reveal">
+        <h3>Resolution honesty</h3>
+        <p>Slope, talus and channel widths are measured in world units, so a
+           terrain previewed at 1024 exports at 4096 as the same landscape — not
+           a thinner, sharper one.</p>
+        <div class="cite">cell = terrainSize / (grid − 1)</div>
+      </article>
+    </div>
+  </div>
+</section>
+
+<section class="band" id="start" style="padding-top:0">
+  <div class="wrap">
+    <div class="split">
+      <div class="reveal">
+        <p class="eyebrow">Get started</p>
+        <h2>Build it and <em>start shaping.</em></h2>
+        <p class="section-lede">
+          Theia needs macOS 14 or newer, Apple Silicon and the Swift 6
+          toolchain. Command Line Tools are enough — full Xcode is not required.
+        </p>
+        <p class="alpha-note">
+          Theia is currently in alpha. The editor and core workflow are usable,
+          but project files and features may still change.
+        </p>
+      </div>
+      <div class="reveal">
+<pre><span class="c"># clone and build</span>
+git clone https://github.com/wondrkid00/Project-Theia.git
+<span class="k">cd</span> Project-Theia
+swift build -c release
+
+<span class="c"># open the editor</span>
+swift run theia-viewer examples/fluvial.json
+
+<span class="c"># or render from the command line</span>
+swift run theia-cli export examples/fluvial.json \
+  --size 2048 --heightmap png16 --mesh obj</pre>
+      </div>
+    </div>
+
+    <div style="margin-top:34px" class="reveal">
+      <div class="pipeline">
+        <span class="step">Build a graph</span><span class="arrow">→</span>
+        <span class="step">Shape the terrain</span><span class="arrow">→</span>
+        <span class="step">Preview the world</span><span class="arrow">→</span>
+        <span class="step">Export</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="cta">
+  <div class="wrap reveal">
+    <h2>Start shaping a world.</h2>
+    <p class="section-lede" style="margin:0 auto 32px">
+      Free and open source. Clone it, build it, and make something.
+    </p>
+    <div class="hero-cta">
+      <a class="btn btn-primary" href="https://github.com/wondrkid00/Project-Theia">View on GitHub</a>
+      <a class="btn btn-ghost" href="https://github.com/wondrkid00/Project-Theia/tree/main/docs/research">Read the research notes</a>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <div class="foot-grid">
+      <a class="brand" href="#top">
+        <span class="mark" id="foot-mark"></span>
+        <span>Theia</span>
+      </a>
+      <div class="foot-links">
+        <a href="https://github.com/wondrkid00/Project-Theia">Source</a>
+        <a href="https://github.com/wondrkid00/Project-Theia/tree/main/docs/research">Research notes</a>
+        <a href="https://github.com/wondrkid00/Project-Theia/tree/main/examples">Example graphs</a>
+        <a href="https://github.com/wondrkid00/Project-Theia/issues">Issues</a>
+      </div>
+    </div>
+    <div class="foot-base">
+      <span>Built on macOS with Metal.</span>
+      <span>Terrain images rendered in Theia.</span>
+    </div>
+  </div>
+</footer>
+
+<script>
+  // The mark is inlined rather than linked so it inherits text colour.
+  fetch('assets/logo/mark.svg')
+    .then(r => r.ok ? r.text() : Promise.reject())
+    .then(svg => {
+      document.querySelectorAll('#brand-mark, #foot-mark')
+        .forEach(el => { el.innerHTML = svg; });
+    })
+    .catch(() => {});
+
+  const io = new IntersectionObserver((entries) => {
+    entries.forEach(e => {
+      if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); }
+    });
+  }, { rootMargin: '0px 0px -8% 0px', threshold: 0.06 });
+
+  document.querySelectorAll('.reveal').forEach((el, i) => {
+    el.style.transitionDelay = (i % 3) * 70 + 'ms';
+    io.observe(el);
+  });
+</script>
+
+</body>
+</html>
